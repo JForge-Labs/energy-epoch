@@ -38,10 +38,51 @@ function surfaceColor(tile: Tile, x: number, y: number): string {
   return (x + y) % 2 === 0 ? C.ground : C.groundAlt;
 }
 
-function zoneOverlay(tile: Tile): string | null {
+function prospectOverlay(tile: Tile): string | null {
   if (!tile.surveyed) return null;
-  if (tile.subsurface.special) return C.special;
-  return [C.zone0, C.zone1, C.zone2, C.zone3][tile.subsurface.zone] ?? null;
+  // Prospect grade — NOT zone. Green/gold = drill; gray = skip.
+  const p = tile.subsurface.prospect;
+  if (p < 0.22) return "rgba(70, 72, 68, 0.55)"; // barren
+  if (p < 0.4) return "rgba(110, 100, 60, 0.4)"; // lean
+  if (p < 0.55) return "rgba(180, 150, 50, 0.35)"; // fair
+  if (p < 0.72) return "rgba(70, 160, 75, 0.45)"; // good
+  return "rgba(230, 190, 40, 0.5)"; // sweet
+}
+
+function drawProspectPip(
+  ctx: CanvasRenderingContext2D,
+  tile: Tile,
+  px: number,
+  py: number,
+  size: number,
+) {
+  if (!tile.surveyed || tile.drilled) return;
+  const p = tile.subsurface.prospect;
+  let label = "·";
+  let color = "#888";
+  if (p < 0.22) {
+    label = "X";
+    color = "#9a9088";
+  } else if (p < 0.4) {
+    label = "L";
+    color = "#b0a060";
+  } else if (p < 0.55) {
+    label = "F";
+    color = "#d4b030";
+  } else if (p < 0.72) {
+    label = "G";
+    color = "#6dce6a";
+  } else {
+    label = "S";
+    color = "#f0c040";
+  }
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.max(10, Math.floor(size * 0.32))}px monospace`;
+  ctx.fillText(label, px + size * 0.12, py + size * 0.32);
+  // Zone as tiny footnote — not the main signal
+  ctx.fillStyle = "rgba(200,210,200,0.55)";
+  ctx.font = `${Math.max(8, Math.floor(size * 0.18))}px monospace`;
+  ctx.fillText(`z${tile.subsurface.zone}`, px + size * 0.55, py + size * 0.9);
 }
 
 function drawWell(
@@ -252,11 +293,17 @@ export function renderGame(
         ctx.strokeRect(px + 2, py + 2, size - 4, size - 4);
       }
 
-      const zo = zoneOverlay(tile);
+      const zo = prospectOverlay(tile);
       if (zo) {
         ctx.fillStyle = zo;
         ctx.fillRect(px, py, size, size);
       }
+      if (tile.surveyed && tile.subsurface.special) {
+        ctx.strokeStyle = "rgba(200, 80, 120, 0.8)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px + 2, py + 2, size - 4, size - 4);
+      }
+      drawProspectPip(ctx, tile, px, py, size);
 
       ctx.strokeStyle = C.grid;
       ctx.lineWidth = 1;

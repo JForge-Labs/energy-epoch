@@ -13,6 +13,36 @@ function zoneFor(dist: number): ZoneTier {
   return 3;
 }
 
+/** Several small oil pockets so a 3×3 survey can show clear hits vs misses */
+function prospectField(
+  x: number,
+  y: number,
+  cols: number,
+  rows: number,
+  seed: number,
+): number {
+  const pockets = [
+    { cx: cols * 0.22, cy: rows * 0.45, w: 3.2 },
+    { cx: cols * 0.48, cy: rows * 0.38, w: 2.6 },
+    { cx: cols * 0.62, cy: rows * 0.62, w: 3.0 },
+    { cx: cols * 0.35, cy: rows * 0.72, w: 2.4 },
+  ];
+  let best = 0;
+  for (let i = 0; i < pockets.length; i++) {
+    const p = pockets[i];
+    const jitter = (hash(i + 3, seed, seed) - 0.5) * 2.5;
+    const dx = x - (p.cx + jitter);
+    const dy = y - (p.cy + jitter * 0.6);
+    const fall = Math.exp(-(dx * dx + dy * dy) / (p.w * p.w));
+    best = Math.max(best, fall);
+  }
+  const noise = hash(x, y, seed) * 0.2;
+  const raw = best * 0.9 + noise * 0.15;
+  if (raw < 0.28) return raw * 0.5;
+  if (raw > 0.55) return Math.min(1, 0.55 + (raw - 0.55) * 1.4);
+  return raw;
+}
+
 function makeSubsurface(
   x: number,
   y: number,
@@ -22,12 +52,11 @@ function makeSubsurface(
 ): Subsurface {
   const n = hash(x, y, seed);
   const n2 = hash(x + 17, y + 91, seed + 3);
-  const cx = cols * (0.35 + hash(1, 2, seed) * 0.3);
-  const cy = rows * (0.4 + hash(3, 4, seed) * 0.25);
+  const cx = cols * 0.45;
+  const cy = rows * 0.5;
   const dist = Math.hypot(x - cx, y - cy) / Math.hypot(cols, rows);
-  const zone = zoneFor(dist + (n - 0.5) * 0.08);
-  const pocket = Math.exp(-dist * dist * 14) * 0.75 + n2 * 0.25;
-  const prospect = Math.max(0, Math.min(1, pocket * (0.55 + n * 0.5)));
+  const zone = zoneFor(dist + (n - 0.5) * 0.06);
+  const prospect = Math.max(0, Math.min(1, prospectField(x, y, cols, rows, seed)));
   const special = zone >= 2 && n2 > 0.55;
 
   return {

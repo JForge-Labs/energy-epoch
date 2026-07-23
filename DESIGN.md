@@ -34,6 +34,14 @@ Well / pad  --roads-->  Tank battery  --roads-->  Refinery (slot)
 6. Earn → pay interest → pay down principal → unlock exploration / better rigs / more capacity.
 7. Stay green: revenue > LOE + interest + fines.
 
+## Exploration (locked)
+
+- **Explore** buys a **3×3 (9 tile)** survey centered on the click.
+- Survey reveals **prospect grade** (Barren → Sweet), not just zone tier.
+- **Good/Sweet** ≈ 90%+ hit with a tier-0-capable hole — that is why you pay to explore.
+- **Wildcat** (unsurveyed) stays risky.
+- Zone tier still gates rig tech; special areas still need permits.
+
 ## Explicit later
 
 Pipelines, pumps, compression, gas plants as commodity purchasers. Richer decline models.

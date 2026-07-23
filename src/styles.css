@@ -130,6 +130,20 @@ body {
   margin-bottom: 0.25rem;
 }
 
+.inspect-legend {
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--bg-panel-edge);
+  font-size: 0.65rem;
+  line-height: 1.5;
+}
+
+.leg-s { color: #f0c040; }
+.leg-g { color: #6dce6a; }
+.leg-f { color: #d4b030; }
+.leg-l { color: #b0a060; }
+.leg-x { color: #9a9088; }
+
 .help-chip {
   position: absolute;
   right: 0.75rem;

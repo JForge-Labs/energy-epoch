@@ -23,8 +23,11 @@ import {
   FACILITY_LIMIT,
   GAS_LINE_COST,
   hitChance,
+  hitChancePercent,
   MIN_REP_FOR_SPECIAL_PERMIT,
   PERMIT_COST,
+  prospectGrade,
+  prospectLabel,
   ROAD_COST,
   rollWellRates,
   STARTER_REFINERY_SLOT_BPD,
@@ -193,7 +196,7 @@ export class Game {
       road: "Lay lease road ($1.2k/tile). Trucks need roads.",
       truck: "Buy another truck.",
       gas_line: "Gas takeaway near a well — stop flare, sell gas.",
-      explore: "Survey pulse — reveal zones (special areas marked).",
+      explore: "Survey a 3×3 (9 tiles). Colors show strike odds — drill Good/Sweet.",
       upgrade_rig: "Higher tier → deeper zones.",
       pay_debt: "Pay principal from cash.",
       draw_credit: "Draw against facility (if room under limit).",
@@ -463,7 +466,7 @@ export class Game {
     const tile = this.tiles[well.y][well.x];
     const prospect = tile.subsurface.prospect;
     const zone = tile.subsurface.zone as ZoneTier;
-    const hit = Math.random() < hitChance(prospect);
+    const hit = Math.random() < hitChance(prospect, tile.surveyed);
 
     rig.busy = false;
     rig.targetWellId = null;
@@ -471,7 +474,10 @@ export class Game {
 
     if (!hit) {
       well.status = "duster";
-      this.message = `Duster at ${well.x},${well.y}.`;
+      const why = tile.surveyed
+        ? `Survey said ${prospectLabel(prospectGrade(prospect))} — dry anyway.`
+        : "Wildcat duster (unsurveyed).";
+      this.message = `Duster at ${well.x},${well.y}. ${why}`;
       return;
     }
 
@@ -569,17 +575,35 @@ export class Game {
     this.player.cash -= EXPLORE_COST;
     this.player.opexToday += EXPLORE_COST;
     this.player.explorationLevel += 1;
-    const radius = 3 + Math.min(3, this.player.explorationLevel);
+
+    // Fixed 3×3 (up to 9 tiles) centered on click
+    const counts: Record<string, number> = {
+      barren: 0,
+      lean: 0,
+      fair: 0,
+      good: 0,
+      sweet: 0,
+    };
     let n = 0;
-    for (let y = 0; y < this.config.rows; y++) {
-      for (let x = 0; x < this.config.cols; x++) {
-        if (Math.hypot(x - cx, y - cy) <= radius) {
-          this.tiles[y][x].surveyed = true;
-          n++;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || y < 0 || x >= this.config.cols || y >= this.config.rows) {
+          continue;
         }
+        this.tiles[y][x].surveyed = true;
+        counts[prospectGrade(this.tiles[y][x].subsurface.prospect)] += 1;
+        n++;
       }
     }
-    this.message = `Survey: ${n} tiles. Special areas need permits.`;
+
+    const targets = counts.good + counts.sweet;
+    this.message =
+      `3×3 survey (${n} tiles): ${counts.sweet} Sweet, ${counts.good} Good, ${counts.fair} Fair, ${counts.lean} Lean, ${counts.barren} Barren. ` +
+      (targets > 0
+        ? `Drill gold/green — ~90%+ hit with T0 on Good/Sweet.`
+        : `No strong targets here — survey elsewhere.`);
     return true;
   }
 
@@ -803,10 +827,22 @@ export class Game {
     if (tile.isPad) bits.push("company pad");
     if (tile.hasRoad) bits.push("road");
     if (tile.surveyed) {
+      const g = prospectGrade(tile.subsurface.prospect);
+      const pct = hitChancePercent(tile.subsurface.prospect, true);
+      bits.push(`${prospectLabel(g)} · ~${pct}% hit`);
       bits.push(`zone ${tile.subsurface.zone}`);
+      const rig = this.selectedRig();
+      const tier = rig?.tier ?? 0;
+      if (tile.subsurface.zone > tier) {
+        bits.push(`needs rig T${tile.subsurface.zone}+`);
+      } else if (g === "good" || g === "sweet") {
+        bits.push("T0 drill target");
+      } else if (g === "barren" || g === "lean") {
+        bits.push("skip — likely duster");
+      }
       if (tile.subsurface.special) bits.push("SPECIAL (permit)");
     } else {
-      bits.push("unexplored");
+      bits.push("unexplored wildcat — pay Explore for 3×3 odds");
     }
     return bits.join(" · ") + ` · ${x},${y}`;
   }

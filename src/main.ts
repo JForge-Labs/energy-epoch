@@ -32,7 +32,8 @@ app.innerHTML = `
     <div class="hover-tip" id="hover-tip"></div>
     <div class="inspect-panel" id="inspect-panel">
       <div class="inspect-title">Inspect</div>
-      <div id="inspect-body">Hover tiles · Right-click to pin · Scroll zoom · Drag pan (middle/right)</div>
+      <div id="inspect-body">Hover tiles · Right-click to pin</div>
+      <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span></div>
     </div>
     <div class="help-chip">Scroll=zoom · Drag=pan · Right-click=inspect</div>
     <div class="toast" id="toast"></div>
@@ -275,5 +276,7 @@ function frame(now: number) {
 
 syncHud();
 syncMeta();
-flash("Scroll to zoom, drag with right/middle mouse to pan. Drill → tank fills → truck hauls.");
+flash(
+  "Explore = 3×3 survey. Gold/green (S/G) = drill targets. Gray (X) = skip. Zone color is gone — grade is oil odds.",
+);
 requestAnimationFrame(frame);

@@ -51,9 +51,57 @@ export const DEFAULT_CONFIG = {
   tickSeconds: 0.2,
 } as const;
 
-/** Simple random wildcat — evolve later */
-export function hitChance(prospect: number): number {
-  return 0.15 + prospect * 0.65;
+/** Simple wildcat vs surveyed outcomes */
+
+export type ProspectGrade = "barren" | "lean" | "fair" | "good" | "sweet";
+
+export function prospectGrade(prospect: number): ProspectGrade {
+  if (prospect < 0.22) return "barren";
+  if (prospect < 0.4) return "lean";
+  if (prospect < 0.55) return "fair";
+  if (prospect < 0.72) return "good";
+  return "sweet";
+}
+
+export function prospectLabel(grade: ProspectGrade): string {
+  switch (grade) {
+    case "barren":
+      return "Barren";
+    case "lean":
+      return "Lean";
+    case "fair":
+      return "Fair";
+    case "good":
+      return "Good";
+    case "sweet":
+      return "Sweet";
+  }
+}
+
+/**
+ * Survey pays for derisking: explored tiles have honest, tight hit odds.
+ * Wildcats stay risky even on good rock.
+ */
+export function hitChance(prospect: number, surveyed: boolean): number {
+  if (!surveyed) {
+    return 0.16 + prospect * 0.38; // ~16–54% wildcat
+  }
+  switch (prospectGrade(prospect)) {
+    case "barren":
+      return 0.04;
+    case "lean":
+      return 0.2;
+    case "fair":
+      return 0.75;
+    case "good":
+      return 0.9;
+    case "sweet":
+      return 0.96;
+  }
+}
+
+export function hitChancePercent(prospect: number, surveyed: boolean): number {
+  return Math.round(hitChance(prospect, surveyed) * 100);
 }
 
 export function rollWellRates(prospect: number, zone: ZoneTier): {
@@ -62,7 +110,7 @@ export function rollWellRates(prospect: number, zone: ZoneTier): {
   declinePerDay: number;
 } {
   const zoneMul = 1 + zone * 0.5;
-  const oilIp = (12 + Math.random() * 160 * prospect) * zoneMul;
+  const oilIp = (12 + Math.random() * 160 * Math.max(0.25, prospect)) * zoneMul;
   const gasIp = oilIp * Math.random() * 2.5;
   const declinePerDay = 0.003 + Math.random() * 0.012;
   return { oilIp, gasIp, declinePerDay };
