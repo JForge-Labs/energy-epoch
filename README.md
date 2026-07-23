@@ -1,29 +1,28 @@
 # Energy Epoch
 
-Factorio-style energy ops on a **$5M credit facility**. Build **roads** from wells to **tank batteries** to the **refinery**. Wildcat with simple random outcomes. Pay interest, protect reputation, operate in the green.
+Factorio-style energy ops on a **$5M credit facility**. Build **roads** from wells to **tank batteries** to the **refinery**.
 
-## Run
+## Play
+
+**Live (mobile-friendly URL):** https://jfodchuk.github.io/energy-epoch/
 
 ```bash
-cd energy-epoch
 npm install
 npm run dev
 ```
 
-## Start package (financed)
-
-- $5,000,000 debt @ ~11% APR
-- ~$800k working cash
-- 1 well pad, 1 tank battery, 1 truck, refinery throughput slot, drill rig
+Mobile: **tap** to build/select, **drag** to pan, **+/−** to zoom.
 
 ## Loop
 
-1. **Road**-connect pad → battery → refinery (trucks only drive roads).
-2. **Drill** the pad (or elsewhere). Duster or ripper — random IP + decline.
-3. Hit → pumpjack + wellhead tank. Trucks: wellhead → battery → refinery (slot capped).
-4. Gas flares until **gas line**. Low **rep** → fines + blocked special permits.
-5. **Pay debt** / grow borrowing base with assets + rep. Goal: green ops, clear the facility.
+1. Road-connect pad → battery → refinery (cardinal edges, not corners).
+2. Drill pad / surveyed Sweet·Good tiles.
+3. Trucks: crude → battery → clean → refinery.
+4. Gas lines stop flare/rep bleed. Rep 0 shuts the lease.
+5. Pay down the facility; operate green.
 
-## Later
+## Deploy
 
-Pipelines, pumps, compression, gas plants that buy commodities.
+```bash
+npm run deploy
+```
