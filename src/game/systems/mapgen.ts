@@ -22,11 +22,15 @@ function prospectField(
   rows: number,
   seed: number,
 ): number {
+  // Scale pocket sizes with the map so bigger leases aren't mostly barren.
+  const s = Math.sqrt((cols * rows) / (40 * 24));
   const pockets = [
-    { cx: cols * 0.22, cy: rows * 0.45, w: 3.2 },
-    { cx: cols * 0.48, cy: rows * 0.38, w: 2.6 },
-    { cx: cols * 0.62, cy: rows * 0.62, w: 3.0 },
-    { cx: cols * 0.35, cy: rows * 0.72, w: 2.4 },
+    { cx: cols * 0.22, cy: rows * 0.45, w: 3.2 * s },
+    { cx: cols * 0.48, cy: rows * 0.38, w: 2.6 * s },
+    { cx: cols * 0.62, cy: rows * 0.62, w: 3.0 * s },
+    { cx: cols * 0.35, cy: rows * 0.72, w: 2.4 * s },
+    { cx: cols * 0.78, cy: rows * 0.3, w: 2.8 * s },
+    { cx: cols * 0.55, cy: rows * 0.85, w: 2.6 * s },
   ];
   let best = 0;
   for (let i = 0; i < pockets.length; i++) {
@@ -87,14 +91,18 @@ function blobField(
 
 /** Assign obstacle terrain (rock ridges, lakes, a winding creek). */
 function assignTerrain(tiles: Tile[][], cols: number, rows: number, seed: number) {
+  // Scale obstacle blobs with the map so they stay proportionate.
+  const s = Math.sqrt((cols * rows) / (40 * 24));
   const rock = [
-    { cx: cols * 0.7, cy: rows * 0.22, w: 3.4 },
-    { cx: cols * 0.8, cy: rows * 0.32, w: 2.8 },
-    { cx: cols * 0.3, cy: rows * 0.85, w: 3.0 },
+    { cx: cols * 0.7, cy: rows * 0.22, w: 3.4 * s },
+    { cx: cols * 0.8, cy: rows * 0.32, w: 2.8 * s },
+    { cx: cols * 0.3, cy: rows * 0.85, w: 3.0 * s },
+    { cx: cols * 0.62, cy: rows * 0.55, w: 2.4 * s },
   ];
   const water = [
-    { cx: cols * 0.55, cy: rows * 0.8, w: 3.2 },
-    { cx: cols * 0.85, cy: rows * 0.68, w: 2.6 },
+    { cx: cols * 0.55, cy: rows * 0.8, w: 3.2 * s },
+    { cx: cols * 0.85, cy: rows * 0.68, w: 2.6 * s },
+    { cx: cols * 0.2, cy: rows * 0.28, w: 2.4 * s },
   ];
 
   for (let y = 0; y < rows; y++) {
@@ -189,7 +197,11 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
 }
 
 export function refineryAnchor(cols: number, rows: number): { x: number; y: number } {
-  return { x: cols - 3, y: rows - 3 };
+  // ~70% out (not the far corner) so the starter trunk isn't punishing.
+  return {
+    x: Math.min(cols - 3, Math.round(cols * 0.7)),
+    y: Math.min(rows - 3, Math.round(rows * 0.7)),
+  };
 }
 
 export function starterPadAnchor(): { x: number; y: number } {

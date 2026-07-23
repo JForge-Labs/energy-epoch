@@ -1,5 +1,6 @@
 import type {
   Building,
+  BuildingKind,
   BuildTool,
   GameConfig,
   MarketState,
@@ -12,10 +13,15 @@ import type {
   ZoneTier,
 } from "./types";
 import {
+  ADD_TANK_COST,
   BATTERY_CLEAN_CAP_BBL,
+  BATTERY_COST,
   BATTERY_CRUDE_CAP_BBL,
   BATTERY_TREAT_BBL_PER_DAY,
   BRIDGE_COST,
+  CLEAN_DRAIN_MIN_BBL,
+  CRUDE_LOAD_READY_FRAC,
+  CRUDE_PIPE_FLOW_BPD,
   DEFAULT_CONFIG,
   DRILL_COST,
   DRILL_DAYS,
@@ -36,6 +42,8 @@ import {
   PERMIT_COST,
   prospectGrade,
   prospectLabel,
+  REFINERY_COST,
+  REFINERY_SLOT_BPD,
   ROAD_COST,
   SELL_REFUND_RATE,
   rollWellRates,
@@ -43,6 +51,8 @@ import {
   TRUCK_CAP_BBL,
   UPGRADE_RIG_COST,
   WELLHEAD_CAP_BBL,
+  WELLHEAD_TANK_ADD_BBL,
+  WELLHEAD_TANK_MAX_CAP_BBL,
 } from "./data/economy";
 import {
   blocksBuild,
@@ -149,11 +159,19 @@ export class Game {
   private strandedDays = new Map<string, number>();
   private repStage = 72; // last warned threshold band
   private interestBucket = 0;
-  /** Oil pipe links battery ↔ refinery (recomputed each tick). */
+  /** Any oil pipe links a battery ↔ a refinery (recomputed each tick). */
   oilConnected = false;
+  /** battery.id → [refinery.id,…] reachable over that battery's oil pipe. */
+  private oilBatteryLinks = new Map<string, string[]>();
+  /** Wellhead-tank id → battery ids it's crude-pipe-connected to (recomputed). */
+  private crudeTankLinks = new Map<string, string[]>();
   /** Gas-pipe tiles reachable from a gas plant (keys "x,y"). */
   private gasConnectedTiles = new Set<string>();
   private pipeOilBucket = 0;
+  /** Recompute pipe networks only when connectivity actually changed. */
+  private pipesDirty = true;
+  /** Player time-of-day speed multiplier (0 = paused). */
+  timeScale = 1;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -282,7 +300,10 @@ export class Game {
       oil_pipe: "Oil pipe: drag battery → refinery for hands-free clean-oil sales.",
       gas_pipe: "Gas pipe: drag wells → gas plant to sell gas at a premium.",
       gas_plant: "Place a 2×2 gas plant — premium buyer for piped gas.",
-      sell: "Scrap a road, pipe, gas line, plant, or extra truck — recover 75%.",
+      battery: "Place a 2×1 tank battery — more crude treating (crude→clean).",
+      refinery: "Place a 2×2 refinery — another daily sales slot.",
+      add_tank: "Click a wellhead tank to add crude storage — fewer overflows between hauls.",
+      sell: "Scrap a road, pipe, gas line, plant, battery, refinery, or truck — 75%.",
       choke: "Click a well to shut it in / bring it back — throttle inflow.",
       truck: "Buy another truck.",
       gas_line: "Gas takeaway near a well — stop flare, sell gas.",
@@ -296,7 +317,6 @@ export class Game {
   }
 
   private assetValue(): number {
-    const ref = this.buildings.find((b) => b.kind === "refinery");
     let roads = 0;
     let pipes = 0;
     for (const row of this.tiles) {
@@ -306,6 +326,9 @@ export class Game {
         if (t.gasPipe) pipes++;
       }
     }
+    const refinerySlotBpd = this.buildings
+      .filter((b) => b.kind === "refinery")
+      .reduce((s, b) => s + (b.throughputCap ?? 0), 0);
     const plants = this.buildings.filter((b) => b.kind === "gas_plant").length;
     return (
       estimateAssetValue({
@@ -313,7 +336,7 @@ export class Game {
         batteries: this.buildings.filter((b) => b.kind === "battery").length,
         trucks: this.units.filter((u) => u.kind === "truck").length,
         roadTiles: roads,
-        refinerySlotBpd: ref?.throughputCap ?? 0,
+        refinerySlotBpd,
       }) +
       plants * 250_000 +
       pipes * 4_000
@@ -346,6 +369,27 @@ export class Game {
     const u = this.units.find((x) => x.id === this.selectedUnitId);
     if (u?.kind === "drill_rig") return u;
     return this.units.find((x) => x.kind === "drill_rig");
+  }
+
+  /** Nearest online building of a kind to (x,y), optionally filtered. */
+  private nearestOf(
+    kind: BuildingKind,
+    x: number,
+    y: number,
+    pred?: (b: Building) => boolean,
+  ): Building | undefined {
+    let best: Building | undefined;
+    let bestD = Infinity;
+    for (const b of this.buildings) {
+      if (b.kind !== kind || !b.online) continue;
+      if (pred && !pred(b)) continue;
+      const d = Math.abs(b.x - x) + Math.abs(b.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
   }
 
   /** Does building b's footprint cover tile (x,y)? */
@@ -437,7 +481,7 @@ export class Game {
         }
       }
       // Always pave at least one cardinal toward battery if possible
-      const batt = this.buildings.find((b) => b.kind === "battery");
+      const batt = this.nearestOf("battery", sx, sy);
       if (batt) {
         const stepX = Math.sign(batt.x - sx);
         const stepY = Math.sign(batt.y - sy);
@@ -506,7 +550,7 @@ export class Game {
     }
     const path = this.roadPath(truck, { x: tankX, y: tankY });
     if (path.length) return "";
-    const batt = this.buildings.find((b) => b.kind === "battery");
+    const batt = this.nearestOf("battery", tankX, tankY);
     if (batt) {
       const toBatt = findPath(
         this.tiles,
@@ -517,25 +561,29 @@ export class Game {
         this.truckPassable,
       );
       if (!toBatt.length && !(tankX === batt.x && tankY === batt.y)) {
-        return `Wellhead (${tankX},${tankY}) is not on the battery road network. Connect with cardinal roads.`;
+        return `Wellhead (${tankX},${tankY}) is not on a battery road network. Connect with cardinal roads.`;
       }
     }
     return `No truck route to wellhead (${tankX},${tankY}) from (${Math.round(truck.x)},${Math.round(truck.y)}). Check cardinal road continuity.`;
   }
 
   private hasRoadAccess(x: number, y: number): boolean {
-    // Connected via roads to battery or refinery?
-    const battery = this.buildings.find((b) => b.kind === "battery");
-    if (!battery) return this.tiles[y][x].hasRoad;
-    const path = findPath(
-      this.tiles,
-      new Set(),
-      { x, y },
-      { x: battery.x, y: battery.y },
-      "road",
-      this.truckPassable,
-    );
-    return path.length > 0 || (x === battery.x && y === battery.y);
+    // Connected via roads to ANY battery?
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    if (!batteries.length) return this.tiles[y][x].hasRoad;
+    for (const battery of batteries) {
+      if (this.occupies(battery, x, y)) return true;
+      const path = findPath(
+        this.tiles,
+        new Set(),
+        { x, y },
+        { x: battery.x, y: battery.y },
+        "road",
+        this.truckPassable,
+      );
+      if (path.length > 0) return true;
+    }
+    return false;
   }
 
   private nudgeRigOffHole(rig: Unit, x: number, y: number) {
@@ -622,6 +670,7 @@ export class Game {
       -cost,
     );
     tile[flag] = true;
+    this.pipesDirty = true;
     this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe laid at ${x},${y}.`;
     return true;
   }
@@ -670,7 +719,99 @@ export class Game {
       w: 2,
       h: 2,
     });
+    this.pipesDirty = true;
     this.message = `Gas plant online at ${x},${y}. Run gas pipe from wells to sell at a premium.`;
+    return true;
+  }
+
+  /** Shared footprint validation for placed multi-tile buildings. */
+  private footprintClear(x: number, y: number, w: number, h: number): boolean {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        const tx = x + dx;
+        const ty = y + dy;
+        if (tx >= this.config.cols || ty >= this.config.rows) {
+          this.message = `Needs a ${w}×${h} clear area in bounds.`;
+          return false;
+        }
+        if (blocksBuild(this.tiles[ty][tx].terrain)) {
+          this.message = `Can't build on ${terrainLabel(this.tiles[ty][tx].terrain)}.`;
+          return false;
+        }
+        if (this.buildingAt(tx, ty)) {
+          this.message = "Something's already on that footprint.";
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /** Build an additional tank battery (2×1). */
+  placeBattery(x: number, y: number): boolean {
+    if (this.player.cash < BATTERY_COST) {
+      this.message = `Battery costs $${BATTERY_COST.toLocaleString()}.`;
+      return false;
+    }
+    if (!this.footprintClear(x, y, 2, 1)) return false;
+    this.player.cash -= BATTERY_COST;
+    this.player.opexToday += BATTERY_COST;
+    this.ledger.push(this.market.day, "capex", `Battery ${x},${y}`, -BATTERY_COST);
+    this.buildings.push({
+      id: uid("bat"),
+      kind: "battery",
+      x,
+      y,
+      oil: 0,
+      oilCap: 0,
+      crude: 0,
+      crudeCap: BATTERY_CRUDE_CAP_BBL,
+      clean: 0,
+      cleanCap: BATTERY_CLEAN_CAP_BBL,
+      wellId: null,
+      online: true,
+      hp: 100,
+      w: 2,
+      h: 1,
+    });
+    this.linkToRoadNetwork(x, y);
+    this.pipesDirty = true;
+    this.message = `New battery online at ${x},${y}. +${BATTERY_TREAT_BBL_PER_DAY} bbl/day treating.`;
+    return true;
+  }
+
+  /** Build an additional refinery (2×2) with its own sales slot. */
+  placeRefinery(x: number, y: number): boolean {
+    if (this.player.cash < REFINERY_COST) {
+      this.message = `Refinery costs $${REFINERY_COST.toLocaleString()}.`;
+      return false;
+    }
+    if (!this.footprintClear(x, y, 2, 2)) return false;
+    this.player.cash -= REFINERY_COST;
+    this.player.opexToday += REFINERY_COST;
+    this.ledger.push(this.market.day, "capex", `Refinery ${x},${y}`, -REFINERY_COST);
+    this.buildings.push({
+      id: uid("ref"),
+      kind: "refinery",
+      x,
+      y,
+      oil: 0,
+      oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
+      wellId: null,
+      online: true,
+      hp: 100,
+      throughputCap: REFINERY_SLOT_BPD,
+      throughputUsed: 0,
+      w: 2,
+      h: 2,
+    });
+    this.linkToRoadNetwork(x, y);
+    this.pipesDirty = true;
+    this.message = `New refinery online at ${x},${y}. +${REFINERY_SLOT_BPD} bbl/day sales slot.`;
     return true;
   }
 
@@ -681,6 +822,8 @@ export class Game {
    */
   sellAt(x: number, y: number): boolean {
     const refundOf = (cost: number) => Math.round(cost * SELL_REFUND_RATE);
+    // Any successful removal below can change pipe connectivity; recompute next tick.
+    this.pipesDirty = true;
 
     // Extra truck sitting on this tile — keep at least one on the lease.
     const truck = this.units.find(
@@ -729,8 +872,21 @@ export class Game {
         return true;
       }
       if (b.kind === "battery" || b.kind === "refinery") {
-        this.message = "Won't scrap the battery or refinery.";
-        return false;
+        const firstOfKind = this.buildings.find((o) => o.kind === b.kind);
+        if (b === firstOfKind) {
+          this.message = `Won't scrap the financed starter ${b.kind}.`;
+          return false;
+        }
+        if (b.kind === "battery" && b.crude + b.clean > 1) {
+          this.message = "Empty the battery before scrapping it.";
+          return false;
+        }
+        const refund = refundOf(b.kind === "battery" ? BATTERY_COST : REFINERY_COST);
+        this.buildings = this.buildings.filter((o) => o.id !== b.id);
+        this.player.cash += refund;
+        this.ledger.push(this.market.day, "other", `${b.kind} salvage`, refund);
+        this.message = `Scrapped ${b.kind}, +$${refund.toLocaleString()}.`;
+        return true;
       }
       if (b.kind === "pumpjack" || b.kind === "wellhead_tank") {
         this.message = "Can't scrap wellhead gear here.";
@@ -782,6 +938,35 @@ export class Game {
     this.message = well.choked
       ? `Well ${x},${y} shut in — inflow stopped. Click again to resume.`
       : `Well ${x},${y} back online — flowing ${well.oilRate.toFixed(0)} bopd.`;
+    return true;
+  }
+
+  /** Add a standard tank to a wellhead, raising its crude storage. */
+  addTank(x: number, y: number): boolean {
+    const tank = this.buildings.find(
+      (b) => b.kind === "wellhead_tank" && b.x === x && b.y === y,
+    );
+    if (!tank) {
+      this.message = "Add tank needs a wellhead tank — click the tank tile.";
+      return false;
+    }
+    if (tank.oilCap <= 0) tank.oilCap = WELLHEAD_CAP_BBL;
+    if (tank.oilCap >= WELLHEAD_TANK_MAX_CAP_BBL) {
+      this.message = `Tank battery maxed at ${WELLHEAD_TANK_MAX_CAP_BBL} bbl.`;
+      return false;
+    }
+    if (this.player.cash < ADD_TANK_COST) {
+      this.message = `Add tank costs $${ADD_TANK_COST.toLocaleString()}.`;
+      return false;
+    }
+    this.player.cash -= ADD_TANK_COST;
+    this.player.opexToday += ADD_TANK_COST;
+    this.ledger.push(this.market.day, "capex", `Wellhead tank ${x},${y}`, -ADD_TANK_COST);
+    tank.oilCap = Math.min(
+      WELLHEAD_TANK_MAX_CAP_BBL,
+      tank.oilCap + WELLHEAD_TANK_ADD_BBL,
+    );
+    this.message = `Tank added at ${x},${y} — storage now ${tank.oilCap} bbl.`;
     return true;
   }
 
@@ -935,7 +1120,8 @@ export class Game {
         if (nx < 0 || ny < 0 || nx >= this.config.cols || ny >= this.config.rows) {
           continue;
         }
-        if (this.buildingAt(nx, ny)?.kind === "refinery") continue;
+        const occ = this.buildingAt(nx, ny)?.kind;
+        if (occ === "refinery" || occ === "battery" || occ === "gas_plant") continue;
         spot = { x: nx, y: ny };
         break;
       }
@@ -970,6 +1156,7 @@ export class Game {
       well.wellheadTankId = tank.id;
       this.tiles[well.y][well.x].hasRoad = true;
       this.linkToRoadNetwork(spot.x, spot.y);
+      this.pipesDirty = true;
     }
 
     this.buildings.push({
@@ -1238,6 +1425,18 @@ export class Game {
       this.placeGasPlant(x, y);
       return;
     }
+    if (this.tool === "battery") {
+      this.placeBattery(x, y);
+      return;
+    }
+    if (this.tool === "refinery") {
+      this.placeRefinery(x, y);
+      return;
+    }
+    if (this.tool === "add_tank") {
+      this.addTank(x, y);
+      return;
+    }
     if (this.tool === "sell") {
       this.sellAt(x, y);
       return;
@@ -1433,13 +1632,13 @@ export class Game {
   }
 
   private updateTrucks() {
-    const battery = this.buildings.find((b) => b.kind === "battery");
-    const refinery = this.buildings.find((b) => b.kind === "refinery");
-    if (!battery || !refinery) return;
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    const refineries = this.buildings.filter((b) => b.kind === "refinery");
+    if (!batteries.length || !refineries.length) return;
 
     if (Math.floor(this.market.day) !== this.throughputDay) {
       this.throughputDay = Math.floor(this.market.day);
-      refinery.throughputUsed = 0;
+      for (const r of refineries) r.throughputUsed = 0;
     }
 
     const at = (u: Unit, x: number, y: number) =>
@@ -1447,6 +1646,8 @@ export class Game {
     // Multi-tile buildings: a truck "arrives" on any footprint tile.
     const atBldg = (u: Unit, b: Building) =>
       this.occupies(b, Math.round(u.x), Math.round(u.y));
+    const refineryAt = (u: Unit) => refineries.find((r) => atBldg(u, r));
+    const batteryAt = (u: Unit) => batteries.find((b) => atBldg(u, b));
 
     const assignPath = (truck: Unit, x: number, y: number): boolean => {
       if (at(truck, x, y)) return true;
@@ -1463,24 +1664,69 @@ export class Game {
       return true;
     };
 
-    const fullestWellhead = () =>
+    // Route to the nearest reachable target; try the next if one is unreachable.
+    const gotoBuilding = (truck: Unit, targets: Building[]): Building | undefined => {
+      const sorted = targets
+        .slice()
+        .sort(
+          (a, b) =>
+            Math.abs(a.x - truck.x) + Math.abs(a.y - truck.y) -
+            (Math.abs(b.x - truck.x) + Math.abs(b.y - truck.y)),
+        );
+      for (const t of sorted) {
+        if (atBldg(truck, t)) return t;
+        if (assignPath(truck, t.x, t.y)) return t;
+      }
+      return undefined;
+    };
+
+    // Full-load discipline: a truck only picks a wellhead once it can nearly
+    // fill. BUT a tank whose well has stopped filling (shut-in / choked / gone)
+    // is hauled on any residual, so end-of-life crude is never stranded.
+    // Crude-piped tanks are left to the pipe unless they climb past 0.7.
+    const crudeReady = (t: Building) =>
+      t.oil >= Math.min(TRUCK_CAP_BBL, Math.max(1, t.oilCap)) * CRUDE_LOAD_READY_FRAC;
+    const tankStillFilling = (t: Building) => {
+      const w = t.wellId ? this.wells.find((x) => x.id === t.wellId) : undefined;
+      return !!w && w.status === "producing" && !w.choked;
+    };
+    const haulReady = (t: Building) =>
+      t.oil >= 2 && (crudeReady(t) || !tankStillFilling(t));
+    const readyWellheads = () =>
       this.buildings
-        .filter((b) => b.kind === "wellhead_tank" && b.online && b.oil >= 2)
-        .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap))[0];
+        .filter(
+          (b) =>
+            b.kind === "wellhead_tank" &&
+            b.online &&
+            haulReady(b) &&
+            (!this.crudeTankLinks.has(b.id) || b.oil / Math.max(1, b.oilCap) >= 0.7),
+        )
+        .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap));
+
+    const battWithCrudeRoom = () => batteries.filter((b) => b.crude < b.crudeCap - 1);
+    const refWithRoom = () =>
+      refineries.filter((r) => (r.throughputCap ?? 0) - (r.throughputUsed ?? 0) > 0.5);
+    const battWithClean = () => batteries.filter((b) => b.clean >= 5);
 
     for (const truck of this.units.filter((u) => u.kind === "truck")) {
       if (truck.path.length) continue;
 
-      // --- Arrive / act at destination ---
-
-      // Sell clean oil at refinery
-      if (truck.cargoKind === "clean" && truck.cargo > 0 && atBldg(truck, refinery)) {
+      // --- Sell clean at the refinery we're standing on ---
+      const refHere =
+        truck.cargoKind === "clean" && truck.cargo > 0 ? refineryAt(truck) : undefined;
+      if (refHere) {
         const room = Math.max(
           0,
-          (refinery.throughputCap ?? 9999) - (refinery.throughputUsed ?? 0),
+          (refHere.throughputCap ?? 9999) - (refHere.throughputUsed ?? 0),
         );
         if (room <= 0) {
-          this.message = "Refinery slot full today — truck waiting with clean oil.";
+          const others = refWithRoom();
+          if (others.length) {
+            truck.job = "to_refinery";
+            gotoBuilding(truck, others);
+            continue;
+          }
+          this.message = "Refinery slots full today — truck waiting with clean oil.";
           truck.job = "to_refinery";
           continue;
         }
@@ -1489,7 +1735,7 @@ export class Game {
         this.player.cash += revenue;
         this.player.revenueToday += revenue;
         this.totalOilSold += sold;
-        refinery.throughputUsed = (refinery.throughputUsed ?? 0) + sold;
+        refHere.throughputUsed = (refHere.throughputUsed ?? 0) + sold;
         truck.cargo -= sold;
         if (truck.cargo < 0.5) {
           truck.cargo = 0;
@@ -1508,51 +1754,60 @@ export class Game {
         // fall through to assign next job same tick
       }
 
-      // Unload crude at battery
-      if (truck.cargoKind === "crude" && truck.cargo > 0 && atBldg(truck, battery)) {
-        const room = Math.max(0, battery.crudeCap - battery.crude);
+      // --- Unload crude at the battery we're standing on ---
+      const batHere =
+        truck.cargoKind === "crude" && truck.cargo > 0 ? batteryAt(truck) : undefined;
+      if (batHere) {
+        const room = Math.max(0, batHere.crudeCap - batHere.crude);
         const into = Math.min(truck.cargo, room);
-        battery.crude += into;
+        batHere.crude += into;
         truck.cargo -= into;
         if (truck.cargo < 0.5) {
           truck.cargo = 0;
           truck.cargoKind = "none";
           truck.job = "idle";
           truck.busy = false;
-          this.message = `Crude delivered · battery crude ${battery.crude.toFixed(0)} bbl.`;
+          this.message = `Crude delivered · battery crude ${batHere.crude.toFixed(0)} bbl.`;
         } else {
-          this.message = "Battery crude full — treating/hauling clean to free space.";
+          const others = battWithCrudeRoom();
+          if (others.length) {
+            truck.job = "to_battery";
+            gotoBuilding(truck, others);
+            continue;
+          }
+          this.message = "Batteries crude full — treat/haul clean to free space.";
           truck.job = "idle";
         }
       }
 
-      // Load clean at battery for refinery run
-      if (
-        truck.cargo < 1 &&
-        atBldg(truck, battery) &&
-        battery.clean >= 5
-      ) {
-        // Prefer clearing wellheads if they're near full; else haul clean
-        const urgent = fullestWellhead();
-        const wellUrgent = urgent && urgent.oil / urgent.oilCap >= 0.7;
-        if (!wellUrgent || battery.crude >= battery.crudeCap * 0.9) {
-          const load = Math.min(truck.cargoCap, battery.clean);
-          battery.clean -= load;
+      // --- Load clean at the battery we're standing on ---
+      const batLoad = truck.cargo < 1 ? batteryAt(truck) : undefined;
+      if (batLoad && batLoad.clean >= 5) {
+        const urgent = readyWellheads()[0];
+        const cleanReady =
+          batLoad.clean >= truck.cargoCap - 0.5 || batLoad.crude < CLEAN_DRAIN_MIN_BBL;
+        if ((!urgent || batLoad.crude >= batLoad.crudeCap * 0.9) && cleanReady) {
+          const load = Math.min(truck.cargoCap, batLoad.clean);
+          batLoad.clean -= load;
           truck.cargo = load;
           truck.cargoKind = "clean";
           truck.job = "to_refinery";
-          truck.targetBuildingId = refinery.id;
+          truck.targetBuildingId =
+            (this.nearestOf(
+              "refinery",
+              batLoad.x,
+              batLoad.y,
+              (r) => (r.throughputCap ?? 0) - (r.throughputUsed ?? 0) > 0.5,
+            ) ?? this.nearestOf("refinery", batLoad.x, batLoad.y))?.id ?? null;
           this.message = `Loaded ${load.toFixed(0)} bbl clean → refinery.`;
         }
       }
 
-      // Load crude at wellhead
+      // --- Load crude at the wellhead we're standing on ---
       if (truck.cargo < 1) {
         const tank = this.buildings.find(
           (b) =>
-            b.kind === "wellhead_tank" &&
-            at(truck, b.x, b.y) &&
-            b.oil >= 2,
+            b.kind === "wellhead_tank" && at(truck, b.x, b.y) && haulReady(b),
         );
         if (tank) {
           const load = Math.min(truck.cargoCap, tank.oil);
@@ -1560,67 +1815,99 @@ export class Game {
           truck.cargo = load;
           truck.cargoKind = "crude";
           truck.job = "to_battery";
-          truck.targetBuildingId = battery.id;
+          truck.targetBuildingId =
+            (this.nearestOf(
+              "battery",
+              tank.x,
+              tank.y,
+              (b) => b.crude < b.crudeCap - 1,
+            ) ?? this.nearestOf("battery", tank.x, tank.y))?.id ?? null;
           this.message = `Loaded ${load.toFixed(0)} bbl crude → battery.`;
         }
       }
 
-      // --- Assign movement while carrying ---
+      // --- Move while carrying ---
       if (truck.cargo > 0 && truck.cargoKind === "crude") {
         truck.job = "to_battery";
-        if (!assignPath(truck, battery.x, battery.y)) {
-          this.message = "No road for crude haul to battery.";
+        const targets = battWithCrudeRoom();
+        if (!gotoBuilding(truck, targets.length ? targets : batteries)) {
+          this.message = "No road for crude haul to a battery.";
         }
         continue;
       }
       if (truck.cargo > 0 && truck.cargoKind === "clean") {
         truck.job = "to_refinery";
-        if (!assignPath(truck, refinery.x, refinery.y)) {
-          this.message = "No road for clean haul to refinery.";
+        const targets = refWithRoom();
+        if (!gotoBuilding(truck, targets.length ? targets : refineries)) {
+          this.message = "No road for clean haul to a refinery.";
         }
         continue;
       }
 
       // --- Empty truck: pick next job (continuous loop) ---
-      const tank = fullestWellhead();
+      const readyTanks = readyWellheads();
+      const tank = readyTanks[0];
       const wellFill = tank ? tank.oil / Math.max(1, tank.oilCap) : 0;
-      const canTakeCrude = battery.crude < battery.crudeCap - 1;
-      const hasClean = battery.clean >= 5;
+      const roomBats = battWithCrudeRoom();
+      const canTakeCrude = roomBats.length > 0;
+      const cleanBats = battWithClean();
+      const totalClean = batteries.reduce((s, b) => s + b.clean, 0);
+      const hasClean = cleanBats.length > 0;
 
-      // Keep wellheads from topping out, but keep clean oil moving to refinery
+      // Keep wellheads from topping out, but keep clean oil moving to sales.
       const preferWellhead =
         !!tank &&
         canTakeCrude &&
-        (wellFill >= 0.4 || !hasClean || battery.clean < truck.cargoCap * 0.5);
+        (wellFill >= 0.4 || !hasClean || totalClean < truck.cargoCap * 0.5);
 
       if (preferWellhead && tank) {
-        truck.job = "to_pickup";
-        truck.targetBuildingId = tank.id;
-        if (!assignPath(truck, tank.x, tank.y)) {
-          this.linkToRoadNetwork(tank.x, tank.y);
-          if (!assignPath(truck, tank.x, tank.y)) {
-            const days = (this.strandedDays.get(tank.id) ?? 0) + 0.02;
-            this.strandedDays.set(tank.id, days);
-            if (days >= 0.5) {
-              this.message = this.diagnoseHaulBlock(truck, tank.x, tank.y);
-              this.guide = `STRANDED WELLHEAD (${tank.x},${tank.y}): ${this.message}`;
-            }
+        // Take the fullest REACHABLE ready wellhead so an unreachable tank
+        // doesn't stall the truck while others wait.
+        let chosen: Building | undefined;
+        for (const t of readyTanks) {
+          if (at(truck, t.x, t.y)) {
+            chosen = t;
+            break;
           }
-        } else {
-          this.strandedDays.delete(tank.id);
-          if (!at(truck, tank.x, tank.y)) {
-            this.message = "Truck looping to wellhead for crude.";
+          if (assignPath(truck, t.x, t.y)) {
+            chosen = t;
+            break;
           }
         }
-        continue;
+        if (chosen) {
+          truck.job = "to_pickup";
+          truck.targetBuildingId = chosen.id;
+          this.strandedDays.delete(chosen.id);
+          if (!at(truck, chosen.x, chosen.y)) {
+            this.message = "Truck looping to wellhead for crude.";
+          }
+          continue;
+        }
+        // None reachable — try to link the fullest, else diagnose and fall
+        // through to clean hauling so the truck still does useful work.
+        this.linkToRoadNetwork(tank.x, tank.y);
+        if (!assignPath(truck, tank.x, tank.y)) {
+          const days = (this.strandedDays.get(tank.id) ?? 0) + 0.02;
+          this.strandedDays.set(tank.id, days);
+          if (days >= 0.5) {
+            this.message = this.diagnoseHaulBlock(truck, tank.x, tank.y);
+            this.guide = `STRANDED WELLHEAD (${tank.x},${tank.y}): ${this.message}`;
+          }
+        } else {
+          truck.job = "to_pickup";
+          truck.targetBuildingId = tank.id;
+          this.strandedDays.delete(tank.id);
+          continue;
+        }
+        // fall through to clean haul
       }
 
       if (hasClean) {
         truck.job = "to_battery";
-        truck.targetBuildingId = battery.id;
-        if (!assignPath(truck, battery.x, battery.y)) {
-          this.message = "No road to battery for clean pickup.";
-        } else if (!atBldg(truck, battery)) {
+        const chosen = gotoBuilding(truck, cleanBats);
+        if (!chosen) {
+          this.message = "No road to a battery for clean pickup.";
+        } else if (!atBldg(truck, chosen)) {
           this.message = "Truck to battery for clean oil.";
         }
         continue;
@@ -1633,9 +1920,8 @@ export class Game {
         continue;
       }
 
-      if (!atBldg(truck, battery)) {
-        assignPath(truck, battery.x, battery.y);
-      }
+      const park = this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y));
+      if (park && !atBldg(truck, park)) assignPath(truck, park.x, park.y);
       truck.job = "idle";
       truck.busy = false;
     }
@@ -1665,8 +1951,9 @@ export class Game {
 
   /**
    * Flood the pipe networks once per tick:
-   *  - oil: is there an oilPipe path from the battery to the refinery?
-   *  - gas: which gasPipe tiles are reachable from a gas plant?
+   *  - oil: for each battery, which refineries + wellhead tanks share its
+   *    oilPipe network (clean flows battery→ref, crude flows tank→battery).
+   *  - gas: which gasPipe tiles are reachable from a gas plant.
    */
   private recomputePipes() {
     const key = (x: number, y: number) => `${x},${y}`;
@@ -1674,60 +1961,83 @@ export class Game {
     const rows = this.config.rows;
 
     this.oilConnected = false;
-    const battery = this.buildings.find((b) => b.kind === "battery");
-    const refinery = this.buildings.find((b) => b.kind === "refinery");
-    if (battery && refinery) {
-      const seen = new Set<string>();
-      const q: { x: number; y: number }[] = [];
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          if (this.tiles[y][x].oilPipe && this.touchesFootprint(x, y, battery)) {
-            const k = key(x, y);
+    this.oilBatteryLinks.clear();
+    this.crudeTankLinks.clear();
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    const refineries = this.buildings.filter((b) => b.kind === "refinery");
+    const tanks = this.buildings.filter(
+      (b) => b.kind === "wellhead_tank" && b.online,
+    );
+
+    // Collect pipe tiles once (not per battery); early-out when there are none.
+    const oilPipeTiles: { x: number; y: number }[] = [];
+    const gasPipeTiles: { x: number; y: number }[] = [];
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const t = this.tiles[y][x];
+        if (t.oilPipe) oilPipeTiles.push({ x, y });
+        if (t.gasPipe) gasPipeTiles.push({ x, y });
+      }
+    }
+
+    if (oilPipeTiles.length && batteries.length) {
+      for (const battery of batteries) {
+        const seen = new Set<string>();
+        const q: { x: number; y: number }[] = [];
+        for (const p of oilPipeTiles) {
+          if (this.touchesFootprint(p.x, p.y, battery)) {
+            const k = key(p.x, p.y);
             if (!seen.has(k)) {
               seen.add(k);
-              q.push({ x, y });
+              q.push(p);
             }
           }
         }
-      }
-      while (q.length) {
-        const c = q.shift()!;
-        if (this.touchesFootprint(c.x, c.y, refinery)) {
-          this.oilConnected = true;
-          break;
+        const reachedRefs = new Set<string>();
+        for (let head = 0; head < q.length; head++) {
+          const c = q[head];
+          for (const r of refineries) {
+            if (this.touchesFootprint(c.x, c.y, r)) reachedRefs.add(r.id);
+          }
+          for (const t of tanks) {
+            if (this.touchesFootprint(c.x, c.y, t)) {
+              const links = this.crudeTankLinks.get(t.id) ?? [];
+              if (!links.includes(battery.id)) links.push(battery.id);
+              this.crudeTankLinks.set(t.id, links);
+            }
+          }
+          for (const [dx, dy] of DIRS4) {
+            const nx = c.x + dx;
+            const ny = c.y + dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+            const k = key(nx, ny);
+            if (seen.has(k) || !this.tiles[ny][nx].oilPipe) continue;
+            seen.add(k);
+            q.push({ x: nx, y: ny });
+          }
         }
-        for (const [dx, dy] of DIRS4) {
-          const nx = c.x + dx;
-          const ny = c.y + dy;
-          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-          const k = key(nx, ny);
-          if (seen.has(k) || !this.tiles[ny][nx].oilPipe) continue;
-          seen.add(k);
-          q.push({ x: nx, y: ny });
+        if (reachedRefs.size) {
+          this.oilBatteryLinks.set(battery.id, [...reachedRefs]);
+          this.oilConnected = true;
         }
       }
     }
 
     this.gasConnectedTiles.clear();
     const plants = this.buildings.filter((b) => b.kind === "gas_plant");
-    if (plants.length) {
+    if (gasPipeTiles.length && plants.length) {
       const q: { x: number; y: number }[] = [];
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          if (
-            this.tiles[y][x].gasPipe &&
-            plants.some((p) => this.touchesFootprint(x, y, p))
-          ) {
-            const k = key(x, y);
-            if (!this.gasConnectedTiles.has(k)) {
-              this.gasConnectedTiles.add(k);
-              q.push({ x, y });
-            }
+      for (const p of gasPipeTiles) {
+        if (plants.some((pl) => this.touchesFootprint(p.x, p.y, pl))) {
+          const k = key(p.x, p.y);
+          if (!this.gasConnectedTiles.has(k)) {
+            this.gasConnectedTiles.add(k);
+            q.push(p);
           }
         }
       }
-      while (q.length) {
-        const c = q.shift()!;
+      for (let head = 0; head < q.length; head++) {
+        const c = q[head];
         for (const [dx, dy] of DIRS4) {
           const nx = c.x + dx;
           const ny = c.y + dy;
@@ -1754,23 +2064,31 @@ export class Game {
 
   /** Auto-flow clean oil battery → refinery over pipe (slot-capped, no trucks). */
   private flowOilPipe(dtDays: number) {
-    if (!this.oilConnected) return;
-    const battery = this.buildings.find((b) => b.kind === "battery");
-    const refinery = this.buildings.find((b) => b.kind === "refinery");
-    if (!battery || !refinery) return;
-    const room = Math.max(
-      0,
-      (refinery.throughputCap ?? 0) - (refinery.throughputUsed ?? 0),
-    );
-    const flow = Math.min(battery.clean, room, OIL_PIPE_FLOW_BPD * dtDays);
-    if (flow <= 0.01) return;
-    const revenue = flow * this.market.oilPrice;
-    battery.clean -= flow;
-    refinery.throughputUsed = (refinery.throughputUsed ?? 0) + flow;
-    this.player.cash += revenue;
-    this.player.revenueToday += revenue;
-    this.totalOilSold += flow;
-    this.pipeOilBucket += revenue;
+    if (!this.oilBatteryLinks.size) return;
+    for (const [batId, refIds] of this.oilBatteryLinks) {
+      const battery = this.buildings.find((b) => b.id === batId);
+      if (!battery) continue;
+      let budget = OIL_PIPE_FLOW_BPD * dtDays;
+      for (const refId of refIds) {
+        if (budget <= 0.01 || battery.clean <= 0.01) break;
+        const refinery = this.buildings.find((b) => b.id === refId);
+        if (!refinery) continue;
+        const room = Math.max(
+          0,
+          (refinery.throughputCap ?? 0) - (refinery.throughputUsed ?? 0),
+        );
+        const flow = Math.min(battery.clean, room, budget);
+        if (flow <= 0.01) continue;
+        const revenue = flow * this.market.oilPrice;
+        battery.clean -= flow;
+        refinery.throughputUsed = (refinery.throughputUsed ?? 0) + flow;
+        budget -= flow;
+        this.player.cash += revenue;
+        this.player.revenueToday += revenue;
+        this.totalOilSold += flow;
+        this.pipeOilBucket += revenue;
+      }
+    }
     if (this.pipeOilBucket >= 1500) {
       this.ledger.push(
         this.market.day,
@@ -1779,6 +2097,44 @@ export class Game {
         this.pipeOilBucket,
       );
       this.pipeOilBucket = 0;
+    }
+  }
+
+  /**
+   * Auto-flow crude wellhead tank → nearest connected battery with room.
+   * Each battery has one shared pipe-intake budget (CRUDE_PIPE_FLOW_BPD) so
+   * total intake does not scale with the number of tanks on its network.
+   */
+  private flowCrudePipe(dtDays: number) {
+    if (!this.crudeTankLinks.size) return;
+    const perBattery = CRUDE_PIPE_FLOW_BPD * dtDays;
+    const budget = new Map<string, number>(); // batteryId → remaining intake
+    // Fullest tanks first so a nearly-overflowing wellhead drains soonest.
+    const tanks = [...this.crudeTankLinks.entries()]
+      .map(([id]) => this.buildings.find((b) => b.id === id))
+      .filter((b): b is Building => !!b && b.kind === "wellhead_tank" && b.online && b.oil > 0.01)
+      .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap));
+    for (const tank of tanks) {
+      const batIds = this.crudeTankLinks.get(tank.id) ?? [];
+      const battery = batIds
+        .map((id) => this.buildings.find((b) => b.id === id))
+        .filter(
+          (b): b is Building =>
+            !!b && b.crude < b.crudeCap - 0.5 && (budget.get(b.id) ?? perBattery) > 0.01,
+        )
+        .sort(
+          (a, b) =>
+            Math.abs(a.x - tank.x) + Math.abs(a.y - tank.y) -
+            (Math.abs(b.x - tank.x) + Math.abs(b.y - tank.y)),
+        )[0];
+      if (!battery) continue;
+      const rem = budget.get(battery.id) ?? perBattery;
+      const room = Math.max(0, battery.crudeCap - battery.crude);
+      const flow = Math.min(tank.oil, room, rem);
+      if (flow <= 0.01) continue;
+      tank.oil -= flow;
+      battery.crude += flow;
+      budget.set(battery.id, rem - flow);
     }
   }
 
@@ -1800,6 +2156,7 @@ export class Game {
     if (t.hp <= 0) {
       t.online = false;
       t.hp = 0;
+      this.pipesDirty = true;
       this.message = `Lightning knocked out ${t.kind} at ${t.x},${t.y}.`;
     } else if (
       (t.kind === "battery" || t.kind === "wellhead_tank") &&
@@ -1831,18 +2188,24 @@ export class Game {
    * Returns "" when the operation is healthy.
    */
   bottleneckAdvice(): string {
-    const batt = this.buildings.find((b) => b.kind === "battery");
-    if (!batt) return "";
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    if (!batteries.length) return "";
     const producing = this.wells.filter(
       (w) => w.status === "producing" && !w.choked,
     );
     if (!producing.length) return "";
     const prodBopd = producing.reduce((s, w) => s + w.oilRate, 0);
     const trucks = this.units.filter((u) => u.kind === "truck").length;
-    const ref = this.buildings.find((b) => b.kind === "refinery");
-    const slotCap = ref?.throughputCap ?? 0;
-    const crudePct = batt.crudeCap ? Math.floor((batt.crude / batt.crudeCap) * 100) : 0;
-    const cleanPct = batt.cleanCap ? Math.floor((batt.clean / batt.cleanCap) * 100) : 0;
+    const refineries = this.buildings.filter((b) => b.kind === "refinery");
+    const slotCap = refineries.reduce((s, b) => s + (b.throughputCap ?? 0), 0);
+    const slotUsed = refineries.reduce((s, b) => s + (b.throughputUsed ?? 0), 0);
+    const crude = batteries.reduce((s, b) => s + b.crude, 0);
+    const crudeCap = batteries.reduce((s, b) => s + b.crudeCap, 0);
+    const clean = batteries.reduce((s, b) => s + b.clean, 0);
+    const cleanCap = batteries.reduce((s, b) => s + b.cleanCap, 0);
+    const treatCeiling = batteries.length * BATTERY_TREAT_BBL_PER_DAY;
+    const crudePct = crudeCap ? Math.floor((crude / crudeCap) * 100) : 0;
+    const cleanPct = cleanCap ? Math.floor((clean / cleanCap) * 100) : 0;
     const wellheadsHot = this.buildings.filter(
       (b) =>
         b.kind === "wellhead_tank" &&
@@ -1853,24 +2216,24 @@ export class Game {
 
     // Clean backing up stalls treating and locks the whole chain.
     if (cleanPct >= 85) {
-      const slotMaxed = (ref?.throughputUsed ?? 0) >= slotCap - 1;
+      const slotMaxed = slotUsed >= slotCap - 1;
       return slotMaxed
-        ? `Clean tank ${cleanPct}% & refinery slot maxed (${slotCap} bbl/day). Sales are capped — slow drilling; refinery/pipe upgrades needed to sell more.`
-        : `Clean tank ${cleanPct}% but the refinery still has room — not enough trucks moving clean to sales. Buy a truck.`;
+        ? `Clean ${cleanPct}% & refinery slots maxed (${slotCap} bbl/day). Sales are capped — build another refinery, run oil pipe, or slow drilling.`
+        : `Clean ${cleanPct}% but refineries still have room — not enough trucks/pipe moving clean to sales. Buy a truck or run oil pipe.`;
     }
     // Crude backing up: treating can't keep pace with production.
     if (crudePct >= 85) {
-      return prodBopd > BATTERY_TREAT_BBL_PER_DAY
-        ? `Crude ${crudePct}%: treating maxed at ${BATTERY_TREAT_BBL_PER_DAY} bbl/day vs ~${Math.round(prodBopd)} bopd produced. Reduce active wells or add treating capacity.`
-        : `Crude ${crudePct}% — clean isn't clearing to the refinery fast enough. Buy a truck.`;
+      return prodBopd > treatCeiling
+        ? `Crude ${crudePct}%: treating maxed at ${treatCeiling} bbl/day vs ~${Math.round(prodBopd)} bopd produced. Choke a well or build another battery.`
+        : `Crude ${crudePct}% — clean isn't clearing to sales fast enough. Buy a truck or run oil pipe.`;
     }
-    // Wellheads overflowing: haul-limited (100 bbl tanks fill fast).
+    // Wellheads overflowing: haul-limited.
     if (wellheadsHot > 0 && trucks < producing.length) {
-      return `${wellheadsHot} wellhead tank(s) near full — ${producing.length} wells vs ${trucks} truck(s). Buy a truck to keep crude moving.`;
+      return `${wellheadsHot} wellhead tank(s) near full — ${producing.length} wells vs ${trucks} truck(s). Buy a truck, add tanks, or run crude pipe.`;
     }
     // Early warning before anything spills.
-    if (prodBopd > BATTERY_TREAT_BBL_PER_DAY * 0.9) {
-      return `Near capacity: ~${Math.round(prodBopd)} bopd produced vs ${BATTERY_TREAT_BBL_PER_DAY}/day treating ceiling. Watch the battery — add trucks/capacity before drilling more.`;
+    if (prodBopd > treatCeiling * 0.9) {
+      return `Near capacity: ~${Math.round(prodBopd)} bopd produced vs ${treatCeiling}/day treating. Add a battery/truck/pipe before drilling more.`;
     }
     return "";
   }
@@ -1881,8 +2244,8 @@ export class Game {
     const flowing = wells.filter((w) => !w.choked);
     const oilBopd = flowing.reduce((s, w) => s + w.oilRate, 0);
     const gasMcfd = flowing.reduce((s, w) => s + w.gasRate, 0);
-    const batt = this.buildings.find((b) => b.kind === "battery");
-    const ref = this.buildings.find((b) => b.kind === "refinery");
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    const refineries = this.buildings.filter((b) => b.kind === "refinery");
     const trucks = this.units.filter((u) => u.kind === "truck");
     const stranded = [...this.strandedDays.entries()].filter(([, d]) => d >= 0.5);
     const interestDay =
@@ -1891,10 +2254,10 @@ export class Game {
       oilBopd,
       gasMcfd,
       wellCount: wells.length,
-      crude: batt?.crude ?? 0,
-      crudeCap: batt?.crudeCap ?? 0,
-      clean: batt?.clean ?? 0,
-      cleanCap: batt?.cleanCap ?? 0,
+      crude: batteries.reduce((s, b) => s + b.crude, 0),
+      crudeCap: batteries.reduce((s, b) => s + b.crudeCap, 0),
+      clean: batteries.reduce((s, b) => s + b.clean, 0),
+      cleanCap: batteries.reduce((s, b) => s + b.cleanCap, 0),
       trucks: trucks.map((t) => ({
         id: t.id,
         job: t.job,
@@ -1913,9 +2276,11 @@ export class Game {
       ledger: this.ledger.recent(10),
       guide: this.guide,
       advice: this.bottleneckAdvice(),
-      treatCap: BATTERY_TREAT_BBL_PER_DAY,
-      refSlotCap: ref?.throughputCap ?? 0,
-      refSlotUsed: ref?.throughputUsed ?? 0,
+      treatCap: batteries.length * BATTERY_TREAT_BBL_PER_DAY,
+      refSlotCap: refineries.reduce((s, b) => s + (b.throughputCap ?? 0), 0),
+      refSlotUsed: refineries.reduce((s, b) => s + (b.throughputUsed ?? 0), 0),
+      batteries: batteries.length,
+      refineries: refineries.length,
       oilPiped: this.oilConnected,
       gasPlants: this.buildings.filter((b) => b.kind === "gas_plant").length,
     };
@@ -2024,7 +2389,7 @@ export class Game {
 
   update(dtSec: number) {
     if (this.gameOver) return;
-    this.acc += dtSec;
+    this.acc += dtSec * this.timeScale;
     const step = this.config.tickSeconds;
     while (this.acc >= step) {
       this.acc -= step;
@@ -2088,7 +2453,10 @@ export class Game {
         this.updateDrilling(dtDays);
       }
 
-      this.recomputePipes();
+      if (this.pipesDirty) {
+        this.recomputePipes();
+        this.pipesDirty = false;
+      }
 
       const wxFactor =
         this.weather.kind === "storm" ? 1 - this.weather.intensity * 0.35 : 1;
@@ -2108,6 +2476,7 @@ export class Game {
       }
       if (prod.messages[0]) this.message = prod.messages[0];
 
+      this.flowCrudePipe(dtDays);
       this.treatBattery(dtDays);
       this.flowOilPipe(dtDays);
       this.updateTrucks();

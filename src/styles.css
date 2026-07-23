@@ -179,10 +179,15 @@ body {
   overflow: auto;
 }
 
+/* Help text lives in the toolbar as its own full-width row so it can never
+   overlap the tool buttons when they wrap. */
 .help-chip {
-  top: auto;
-  bottom: 3.2rem;
-  right: 0.75rem;
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 0 0.15rem 0.15rem;
+  opacity: 0.85;
 }
 
 .guide-bar {
@@ -361,6 +366,76 @@ body {
 
 .toast.show {
   opacity: 1;
+}
+
+/* Time-of-day speed control (HUD). */
+.speed-ctl {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.spd-btn {
+  appearance: none;
+  border: 1px solid var(--bg-panel-edge);
+  background: #141916;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  min-width: 1.9rem;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+}
+
+.spd-btn:hover {
+  color: var(--amber-hot);
+  border-color: var(--steel);
+}
+
+.spd-btn.active {
+  border-color: var(--amber);
+  background: #242018;
+  color: var(--amber-hot);
+}
+
+/* Right-click context action menu. */
+.context-menu[hidden] {
+  display: none !important;
+}
+
+.context-menu {
+  position: absolute;
+  z-index: 15;
+  min-width: 9.5rem;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 24, 20, 0.97);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-item {
+  appearance: none;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  text-align: left;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+}
+
+.ctx-item:last-child {
+  border-bottom: none;
+}
+
+.ctx-item:hover {
+  background: #242018;
+  color: var(--amber-hot);
 }
 
 @media (max-width: 720px) {

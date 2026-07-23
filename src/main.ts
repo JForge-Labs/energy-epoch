@@ -2,6 +2,8 @@ import "./styles.css";
 import { clampCamera, createCamera } from "./game/camera";
 import { Game } from "./game/Game";
 import {
+  ADD_TANK_COST,
+  BATTERY_COST,
   DRILL_COST,
   EXPLORE_COST,
   EXTRA_TRUCK_COST,
@@ -10,23 +12,14 @@ import {
   GAS_PLANT_COST,
   OIL_PIPE_COST,
   PERMIT_COST,
+  REFINERY_COST,
   ROAD_COST,
   UPGRADE_RIG_COST,
+  WELLHEAD_TANK_ADD_BBL,
 } from "./game/data/economy";
 import { canvasToTile, renderGame } from "./game/render";
 import type { PixiRenderer } from "./game/renderPixi";
 import type { BuildTool } from "./game/types";
-
-const CONFIRM_TOOLS = new Set<BuildTool>([
-  "explore",
-  "drill",
-  "upgrade_rig",
-  "truck",
-  "draw_credit",
-  "buy_permit",
-  "gas_line",
-  "gas_plant",
-]);
 
 const COST: Partial<Record<BuildTool, number>> = {
   explore: EXPLORE_COST,
@@ -36,6 +29,9 @@ const COST: Partial<Record<BuildTool, number>> = {
   buy_permit: PERMIT_COST,
   gas_line: GAS_LINE_COST,
   gas_plant: GAS_PLANT_COST,
+  battery: BATTERY_COST,
+  refinery: REFINERY_COST,
+  add_tank: ADD_TANK_COST,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -52,6 +48,12 @@ app.innerHTML = `
       <div>Day <strong id="stat-day">1</strong></div>
       <div id="ops-wrap" class="clickable" title="Click for ops detail">Ops <strong id="stat-ops">—</strong></div>
       <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
+      <div class="speed-ctl" title="Time speed">
+        <button type="button" class="spd-btn" data-spd="0">❚❚</button>
+        <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
+        <button type="button" class="spd-btn active" data-spd="1">1×</button>
+        <button type="button" class="spd-btn" data-spd="2">2×</button>
+      </div>
     </div>
     <div class="hud-actions">
       <button type="button" class="tool-btn" id="btn-home">Home</button>
@@ -75,7 +77,7 @@ app.innerHTML = `
       <div id="ledger-body">—</div>
     </div>
     <div class="guide-bar" id="guide-bar"></div>
-    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay a line · Right-click inspect</div>
+    <div class="context-menu" id="context-menu" hidden></div>
     <div class="toast" id="toast"></div>
     <div class="confirm-banner" id="confirm-banner" hidden></div>
     <div class="gameover" id="gameover" hidden>
@@ -87,14 +89,18 @@ app.innerHTML = `
     </div>
   </div>
   <footer class="bottom-bar">
+    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay · Right-click for actions</div>
     <button class="tool-btn active" data-tool="select" type="button">Select</button>
     <button class="tool-btn" data-tool="road" type="button">Road</button>
     <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_plant" type="button">Gas plant · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="refinery" type="button">Refinery · $${(REFINERY_COST / 1000000).toFixed(1)}M</button>
     <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
     <button class="tool-btn" data-tool="move_rig" type="button">Move rig</button>
     <button class="tool-btn" data-tool="choke" type="button">Choke well</button>
+    <button class="tool-btn" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="drill" type="button">Drill</button>
     <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
@@ -199,14 +205,16 @@ function disarmToSelect() {
 }
 
 const SAVE_KEY = "energy-epoch-save";
-// Bump on state-schema changes: 2 footprints, 3 terrain + bigger map + pipes.
-const SAVE_VERSION = 3;
+// Bump on state-schema changes: 2 footprints, 3 terrain+pipes, 4 map 56×36.
+const SAVE_VERSION = 4;
+
+let currentSpeed = 1;
 
 function saveGame() {
   try {
     localStorage.setItem(
       SAVE_KEY,
-      JSON.stringify({ v: SAVE_VERSION, cam, game: game.serialize() }),
+      JSON.stringify({ v: SAVE_VERSION, cam, spd: currentSpeed, game: game.serialize() }),
     );
   } catch {
     // storage full / unavailable — non-fatal, game keeps running in memory
@@ -236,15 +244,26 @@ function loadGame(): boolean {
       cam.zoom = snap.cam.zoom;
       clampCamera(cam, game.config.cols, game.config.rows);
     }
+    // Restore speed, but never load into a frozen (paused) sim.
+    if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
     return true;
   } catch {
     return false;
   }
 }
 
+function setSpeed(s: number) {
+  currentSpeed = s;
+  game.timeScale = s;
+  document.querySelectorAll(".spd-btn").forEach((b) => {
+    b.classList.toggle("active", Number((b as HTMLElement).dataset.spd) === s);
+  });
+}
+
 function resetLease() {
   localStorage.removeItem(SAVE_KEY);
   game = new Game();
+  game.timeScale = currentSpeed;
   cam = createCamera(game.config.cols, game.config.rows);
   clearConfirm();
   gameoverEl.classList.remove("is-open");
@@ -265,6 +284,13 @@ document.querySelector("#btn-home")!.addEventListener("click", () => {
 });
 document.querySelector("#btn-reset")!.addEventListener("click", resetLease);
 document.querySelector("#btn-reset-go")!.addEventListener("click", resetLease);
+
+document.querySelectorAll(".spd-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setSpeed(Number((btn as HTMLElement).dataset.spd));
+    saveGame();
+  });
+});
 
 document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   flash(game.opsReason);
@@ -405,6 +431,39 @@ function handleTileClick(tile: { x: number; y: number }) {
       return;
     }
     game.placeGasPlant(tile.x, tile.y);
+    flash(game.message);
+    disarmToSelect();
+    syncAll();
+    return;
+  }
+
+  if (tool === "battery") {
+    if (!askConfirm("battery", `2×1 battery with top-left at ${tile.x},${tile.y}.`)) {
+      return;
+    }
+    game.placeBattery(tile.x, tile.y);
+    flash(game.message);
+    disarmToSelect();
+    syncAll();
+    return;
+  }
+
+  if (tool === "refinery") {
+    if (!askConfirm("refinery", `2×2 refinery with top-left at ${tile.x},${tile.y}.`)) {
+      return;
+    }
+    game.placeRefinery(tile.x, tile.y);
+    flash(game.message);
+    disarmToSelect();
+    syncAll();
+    return;
+  }
+
+  if (tool === "add_tank") {
+    if (!askConfirm("add_tank", `+${WELLHEAD_TANK_ADD_BBL} bbl storage at ${tile.x},${tile.y}.`)) {
+      return;
+    }
+    game.addTank(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
     syncAll();
@@ -606,14 +665,10 @@ canvas.addEventListener("pointermove", (e) => {
 
 canvas.addEventListener("pointerup", (e) => {
   if (panning && e.button === panButton) {
-    // Right-click without drag = pin inspect
+    // Right-click without drag = open the context action menu
     if (panButton === 2 && panDist <= DRAG_THRESHOLD) {
       const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
-      if (tile) {
-        pinnedInspect = game.inspectAt(tile.x, tile.y);
-        inspectBody.textContent = pinnedInspect;
-        flash(pinnedInspect);
-      }
+      if (tile) openContextMenu(e.clientX, e.clientY, tile);
     }
     panning = false;
     panButton = -1;
@@ -647,6 +702,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     clearConfirm();
     disarmToSelect();
+    closeContextMenu();
   }
   if (e.key === "h") {
     const p = game.recenterHint();
@@ -663,6 +719,97 @@ function flash(msg: string) {
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => el.classList.remove("show"), 3200);
 }
+
+const contextMenu = document.querySelector<HTMLDivElement>("#context-menu")!;
+
+function closeContextMenu() {
+  contextMenu.hidden = true;
+  contextMenu.innerHTML = "";
+}
+
+/** Right-click actions relevant to whatever is under the cursor. */
+function openContextMenu(
+  clientX: number,
+  clientY: number,
+  tile: { x: number; y: number },
+) {
+  const items: { label: string; act: () => void }[] = [];
+  const well = game.wellAt(tile.x, tile.y);
+  const b = game.buildingAt(tile.x, tile.y);
+  const rig = game.units.find(
+    (u) =>
+      u.kind === "drill_rig" &&
+      Math.round(u.x) === tile.x &&
+      Math.round(u.y) === tile.y,
+  );
+  const tt = game.tiles[tile.y][tile.x];
+  const k = (n: number) => `$${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+
+  if (rig && !rig.busy) {
+    items.push({
+      label: `Drill here (AFE ${k(DRILL_COST[tt.subsurface.zone])})`,
+      act: () => game.startDrill(),
+    });
+  }
+  if (well && well.status === "producing") {
+    items.push({
+      label: well.choked ? "Bring well online" : "Choke well",
+      act: () => game.toggleChoke(tile.x, tile.y),
+    });
+    items.push({ label: `Gas line (${k(GAS_LINE_COST)})`, act: () => game.placeGasLine(tile.x, tile.y) });
+  }
+  if (b?.kind === "wellhead_tank") {
+    items.push({ label: `Add tank (${k(ADD_TANK_COST)})`, act: () => game.addTank(tile.x, tile.y) });
+  }
+  const onStructure = well || (b && b.kind !== "gas_flare");
+  if (!onStructure) {
+    if (!tt.hasRoad) items.push({ label: `Road (${k(ROAD_COST)})`, act: () => game.layRoad(tile.x, tile.y) });
+    if (!tt.oilPipe) items.push({ label: `Oil pipe (${k(OIL_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "oil") });
+    if (!tt.gasPipe) items.push({ label: `Gas pipe (${k(GAS_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "gas") });
+  }
+  if (tt.hasRoad || tt.oilPipe || tt.gasPipe || (b && b.kind !== "gas_flare")) {
+    items.push({ label: "Sell / remove (75%)", act: () => game.sellAt(tile.x, tile.y) });
+  }
+  items.push({
+    label: "Inspect",
+    act: () => {
+      pinnedInspect = game.inspectAt(tile.x, tile.y);
+      inspectBody.textContent = pinnedInspect;
+      game.message = pinnedInspect; // so the shared flash shows inspect text
+    },
+  });
+
+  contextMenu.innerHTML = "";
+  for (const it of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ctx-item";
+    btn.textContent = it.label;
+    btn.addEventListener("click", () => {
+      it.act();
+      flash(game.message);
+      syncAll();
+      saveGame();
+      closeContextMenu();
+    });
+    contextMenu.appendChild(btn);
+  }
+
+  const wrap = canvas.parentElement!.getBoundingClientRect();
+  const mx = Math.min(clientX - wrap.left, wrap.width - 190);
+  const my = Math.min(clientY - wrap.top, wrap.height - items.length * 30 - 12);
+  contextMenu.style.left = `${Math.max(4, mx)}px`;
+  contextMenu.style.top = `${Math.max(4, my)}px`;
+  contextMenu.hidden = false;
+}
+
+// Dismiss the context menu on any other interaction.
+window.addEventListener("pointerdown", (e) => {
+  if (!contextMenu.hidden && !contextMenu.contains(e.target as Node)) {
+    closeContextMenu();
+  }
+});
+window.addEventListener("wheel", () => closeContextMenu());
 
 function syncHud() {
   const d = game.dashboard();
@@ -770,5 +917,3 @@ window.addEventListener("pagehide", saveGame);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") saveGame();
 });
-
-void CONFIRM_TOOLS;

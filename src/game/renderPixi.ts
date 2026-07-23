@@ -154,7 +154,17 @@ export class PixiRenderer {
       this.h / 2 - cam.y * ts * zoom,
     );
 
-    this.drawTiles(game, ts);
+    // Viewport cull — only iterate tiles near the camera (big-map perf).
+    const halfX = this.w / 2 / (ts * zoom) + 2;
+    const halfY = this.h / 2 / (ts * zoom) + 2;
+    const bounds = {
+      minX: Math.max(0, Math.floor(cam.x - halfX)),
+      maxX: Math.min(game.config.cols - 1, Math.ceil(cam.x + halfX)),
+      minY: Math.max(0, Math.floor(cam.y - halfY)),
+      maxY: Math.min(game.config.rows - 1, Math.ceil(cam.y + halfY)),
+    };
+
+    this.drawTiles(game, ts, bounds);
     this.drawSpills(game, ts);
     this.drawBuildings(game, ts);
     this.drawWells(game, ts);
@@ -186,12 +196,15 @@ export class PixiRenderer {
     }
   }
 
-  private drawTiles(game: Game, ts: number): void {
+  private drawTiles(
+    game: Game,
+    ts: number,
+    bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  ): void {
     const g = this.gTiles;
     g.clear();
-    const { cols, rows } = game.config;
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
+    for (let y = bounds.minY; y <= bounds.maxY; y++) {
+      for (let x = bounds.minX; x <= bounds.maxX; x++) {
         const tile = game.tiles[y][x];
         const px = x * ts;
         const py = y * ts;

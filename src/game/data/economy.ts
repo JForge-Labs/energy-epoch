@@ -1,9 +1,19 @@
 import type { ZoneTier } from "../types";
 
-export const WELLHEAD_CAP_BBL = 100;
+/** Base wellhead tank — a standard 400 bbl tank (= one tanker load). */
+export const WELLHEAD_CAP_BBL = 400;
+/** Add-tank upgrade: each adds a standard 400 bbl tank, up to the max. */
+export const WELLHEAD_TANK_ADD_BBL = 400;
+export const WELLHEAD_TANK_MAX_CAP_BBL = 1_600;
+export const ADD_TANK_COST = 40_000;
 export const BATTERY_CRUDE_CAP_BBL = 1_500;
 export const BATTERY_CLEAN_CAP_BBL = 1_500;
-export const TRUCK_CAP_BBL = 180;
+/** Oil tanker capacity (bbl) — exactly one base wellhead tank. */
+export const TRUCK_CAP_BBL = 400;
+/** Truck departs a wellhead once it holds this fraction of a full load. */
+export const CRUDE_LOAD_READY_FRAC = 0.9;
+/** Battery keeps a truck loading clean until this little crude remains. */
+export const CLEAN_DRAIN_MIN_BBL = 5;
 /** Battery treats crude → clean (bbl / sim-day) */
 export const BATTERY_TREAT_BBL_PER_DAY = 1_000;
 
@@ -33,10 +43,18 @@ export const OIL_PIPE_COST = 6_000;
 export const GAS_PIPE_COST = 5_000;
 /** Oil pipe intake (bbl/day) — high; refinery slot still caps actual sales. */
 export const OIL_PIPE_FLOW_BPD = 4_000;
+/** Crude pipe intake wellhead tank → battery (bbl/day, per network). */
+export const CRUDE_PIPE_FLOW_BPD = 2_000;
 
 /** Gas plant — premium piped-gas buyer (vs the cheap flare-stopping gas line). */
 export const GAS_PLANT_COST = 300_000;
 export const GAS_PLANT_PREMIUM = 1.6;
+
+/** Additional built facilities (beyond the financed starters). */
+export const BATTERY_COST = 650_000;
+export const REFINERY_COST = 1_600_000;
+/** A bought refinery's daily sales slot — matches the starter. */
+export const REFINERY_SLOT_BPD = 1_200;
 
 export const EXPLORE_COST = 40_000;
 export const GAS_LINE_COST = 55_000;
@@ -62,8 +80,8 @@ export const DRILL_DAYS: Record<ZoneTier, number> = {
 };
 
 export const DEFAULT_CONFIG = {
-  cols: 40,
-  rows: 24,
+  cols: 56,
+  rows: 36,
   tileSize: 36,
   startingCash: STARTING_WORKING_CASH,
   tickSeconds: 0.2,
