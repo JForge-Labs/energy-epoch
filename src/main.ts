@@ -47,6 +47,8 @@ app.innerHTML = `
       <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
     </div>
     <div class="hud-actions">
+      <button type="button" class="tool-btn" id="btn-zoom-out" title="Zoom out">−</button>
+      <button type="button" class="tool-btn" id="btn-zoom-in" title="Zoom in">+</button>
       <button type="button" class="tool-btn" id="btn-home">Home</button>
       <button type="button" class="tool-btn" id="btn-reset">Reset lease</button>
     </div>
@@ -68,7 +70,7 @@ app.innerHTML = `
       <div id="ledger-body">—</div>
     </div>
     <div class="guide-bar" id="guide-bar"></div>
-    <div class="help-chip">Scroll zoom · Drag pan · Right-click inspect · Tools disarm after use</div>
+    <div class="help-chip">Tap=select · Drag=pan · +/− zoom · Tools disarm after use</div>
     <div class="toast" id="toast"></div>
     <div class="confirm-banner" id="confirm-banner" hidden></div>
     <div class="gameover" id="gameover" hidden>
@@ -181,6 +183,14 @@ document.querySelector("#btn-home")!.addEventListener("click", () => {
   cam.x = p.x;
   cam.y = p.y;
   cam.zoom = 1.15;
+  clampCamera(cam, game.config.cols, game.config.rows);
+});
+document.querySelector("#btn-zoom-in")!.addEventListener("click", () => {
+  cam.zoom *= 1.2;
+  clampCamera(cam, game.config.cols, game.config.rows);
+});
+document.querySelector("#btn-zoom-out")!.addEventListener("click", () => {
+  cam.zoom *= 0.8;
   clampCamera(cam, game.config.cols, game.config.rows);
 });
 document.querySelector("#btn-reset")!.addEventListener("click", resetLease);
@@ -304,7 +314,74 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   if (e.button !== 0) return;
-  const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+  // Finger / left-drag can pan; tap (small movement) still places/selects
+  panning = true;
+  panButton = 0;
+  lastPanX = e.clientX;
+  lastPanY = e.clientY;
+  panDist = 0;
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (panning) {
+    const rect = canvas.getBoundingClientRect();
+    const canvasDx = (e.clientX - lastPanX) * (canvas.width / rect.width);
+    const canvasDy = (e.clientY - lastPanY) * (canvas.height / rect.height);
+    panDist += Math.hypot(canvasDx, canvasDy);
+    if (panDist > 8) {
+      const tsize = game.config.tileSize * cam.zoom;
+      cam.x -= canvasDx / tsize;
+      cam.y -= canvasDy / tsize;
+      clampCamera(cam, game.config.cols, game.config.rows);
+    }
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    return;
+  }
+
+  hover = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+  if (hover) {
+    const text = game.inspectAt(hover.x, hover.y);
+    hoverTip.textContent = text;
+    hoverTip.style.display = "block";
+    const wrap = canvas.parentElement!.getBoundingClientRect();
+    hoverTip.style.left = `${Math.min(e.clientX - wrap.left + 14, wrap.width - 280)}px`;
+    hoverTip.style.top = `${Math.min(e.clientY - wrap.top + 14, wrap.height - 60)}px`;
+  } else {
+    hoverTip.style.display = "none";
+  }
+});
+
+canvas.addEventListener("pointerup", (e) => {
+  if (!panning || e.button !== panButton) return;
+
+  const wasTap = panDist <= 8;
+  const clientX = e.clientX;
+  const clientY = e.clientY;
+  panning = false;
+  panButton = -1;
+  panDist = 0;
+
+  if (e.button === 2) {
+    if (wasTap) {
+      const tile = canvasToTile(canvas, game, cam, clientX, clientY);
+      if (tile) {
+        pinnedInspect = game.inspectAt(tile.x, tile.y);
+        inspectBody.textContent = pinnedInspect;
+        flash(pinnedInspect);
+      }
+    }
+    return;
+  }
+
+  if (e.button === 0 && wasTap) {
+    handleCanvasTap(clientX, clientY);
+  }
+});
+
+function handleCanvasTap(clientX: number, clientY: number) {
+  const tile = canvasToTile(canvas, game, cam, clientX, clientY);
   if (!tile) return;
 
   const tool = game.tool;
@@ -335,7 +412,6 @@ canvas.addEventListener("pointerdown", (e) => {
   }
 
   if (tool === "drill") {
-    // drill is button-confirmed; map click while armed shouldn't re-fire
     disarmToSelect();
     return;
   }
@@ -346,60 +422,12 @@ canvas.addEventListener("pointerdown", (e) => {
   flash(game.message);
 
   if (tool === "road" || tool === "move_rig") {
-    // keep road/move armed for multi-place / pathing
+    // keep armed
   } else if (tool !== "select") {
     disarmToSelect();
   }
   syncAll();
-});
-
-canvas.addEventListener("pointermove", (e) => {
-  if (panning) {
-    const rect = canvas.getBoundingClientRect();
-    const canvasDx = (e.clientX - lastPanX) * (canvas.width / rect.width);
-    const canvasDy = (e.clientY - lastPanY) * (canvas.height / rect.height);
-    panDist += Math.hypot(canvasDx, canvasDy);
-    // Ignore tiny jitter so right-click inspect doesn't fling the camera
-    if (panDist > 6) {
-      const tsize = game.config.tileSize * cam.zoom;
-      cam.x -= canvasDx / tsize;
-      cam.y -= canvasDy / tsize;
-      clampCamera(cam, game.config.cols, game.config.rows);
-    }
-    lastPanX = e.clientX;
-    lastPanY = e.clientY;
-    return;
-  }
-
-  hover = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
-  if (hover) {
-    const text = game.inspectAt(hover.x, hover.y);
-    hoverTip.textContent = text;
-    hoverTip.style.display = "block";
-    const wrap = canvas.parentElement!.getBoundingClientRect();
-    hoverTip.style.left = `${Math.min(e.clientX - wrap.left + 14, wrap.width - 280)}px`;
-    hoverTip.style.top = `${Math.min(e.clientY - wrap.top + 14, wrap.height - 60)}px`;
-  } else {
-    hoverTip.style.display = "none";
-  }
-});
-
-canvas.addEventListener("pointerup", (e) => {
-  if (panning && e.button === panButton) {
-    // Right-click without drag = pin inspect
-    if (panButton === 2 && panDist <= 6) {
-      const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
-      if (tile) {
-        pinnedInspect = game.inspectAt(tile.x, tile.y);
-        inspectBody.textContent = pinnedInspect;
-        flash(pinnedInspect);
-      }
-    }
-    panning = false;
-    panButton = -1;
-    panDist = 0;
-  }
-});
+}
 canvas.addEventListener("pointerleave", () => {
   hover = null;
   hoverTip.style.display = "none";
