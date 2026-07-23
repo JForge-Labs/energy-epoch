@@ -15,6 +15,7 @@ export interface ProdResult {
   spilled: number;
   spillCleanup: number;
   messages: string[];
+  cleanups: { label: string; amount: number }[];
 }
 
 function hasGasLine(well: Well, buildings: Building[]): boolean {
@@ -41,6 +42,7 @@ export function simulateProduction(
     spilled: 0,
     spillCleanup: 0,
     messages: [],
+    cleanups: [],
   };
 
   for (const well of wells) {
@@ -82,12 +84,17 @@ export function simulateProduction(
           0,
           player.reputation - overflow * SPILL_REP_PER_BBL,
         );
+        result.cleanups.push({
+          label: `Wellhead spill cleanup (${well.x},${well.y})`,
+          amount: cleanup,
+        });
         result.messages.push(
-          `Wellhead spill ${overflow.toFixed(0)} bbl — cleanup $${cleanup.toFixed(0)}.`,
+          `TANK FULL @ (${tank.x},${tank.y}) — crude spilled ${overflow.toFixed(0)} bbl. Get a truck on a CARDINAL road to this tank.`,
         );
       }
     }
 
+    // Associated gas: flare hurts rep; full tank makes flaring worse/more visible
     if (gas > 0.01) {
       if (hasGasLine(well, buildings)) {
         const revenue = gas * gasPrice;
@@ -99,16 +106,24 @@ export function simulateProduction(
         );
         result.gasSold += gas;
       } else {
-        player.reputation = Math.max(
-          0,
-          player.reputation - gas * FLARE_REP_PER_MCF,
-        );
+        const tankFull = tank && tank.oil >= tank.oilCap - 0.01;
+        const flareMul = tankFull ? 2.2 : 1;
+        const repHit = gas * FLARE_REP_PER_MCF * flareMul;
+        player.reputation = Math.max(0, player.reputation - repHit);
         result.gasFlared += gas;
+        if (tankFull && Math.random() < 0.08) {
+          result.messages.push(
+            `FLARING @ well (${well.x},${well.y}) — tank full, no takeaway. Rep −${repHit.toFixed(2)}. Build gas line or haul crude.`,
+          );
+        } else if (!tankFull && Math.random() < 0.03) {
+          result.messages.push(
+            `Flaring associated gas @ (${well.x},${well.y}) — rep bleeding. Place a gas line.`,
+          );
+        }
       }
     }
   }
 
-  // Battery crude overflow spills
   for (const b of buildings) {
     if (b.kind !== "battery" || !b.online) continue;
     if (b.crude > b.crudeCap) {
@@ -122,8 +137,9 @@ export function simulateProduction(
         0,
         player.reputation - overflow * SPILL_REP_PER_BBL,
       );
+      result.cleanups.push({ label: "Battery crude spill cleanup", amount: cleanup });
       result.messages.push(
-        `Battery crude spill ${overflow.toFixed(0)} bbl — haul clean / treat faster.`,
+        `Battery crude spill ${overflow.toFixed(0)} bbl — haul clean to refinery.`,
       );
     }
   }

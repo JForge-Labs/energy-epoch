@@ -35,7 +35,14 @@ Wellhead (crude) --truck/roads--> Battery (treat crude→clean) --truck/roads-->
 6. Earn → pay interest → pay down principal → unlock exploration / better rigs / more capacity.
 7. Stay green: revenue > LOE + interest + fines.
 
-## Exploration (locked)
+## Playtest patches (locked intent)
+
+- Trucks need **cardinal** road adjacency (not corners); stranded wells get specific diagnostics.
+- **Rep 0 = lease shut-in** (game over). Warnings at 45 and 25.
+- **Ops RED/GREEN** explains interest vs tickets; clickable.
+- Costly tools use **click-again confirm** and mostly **disarm after use**.
+- **Cash log** + facility dashboard + sticky guide bar.
+- Full tank → explicit spill/flare → rep hit. Weather slows haul / stands down drill.
 
 - **Explore** buys a **3×3 (9 tile)** survey centered on the click.
 - Survey reveals **prospect grade** (Barren → Sweet), not just zone tier.

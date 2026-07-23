@@ -43,7 +43,7 @@ import {
   starterBatteryAnchor,
   starterPadAnchor,
 } from "./systems/mapgen";
-import { findPath } from "./systems/pathfind";
+import { findPath, hasDiagonalRoadOnly } from "./systems/pathfind";
 import { simulateProduction } from "./systems/production";
 import {
   accrueInterest,
@@ -53,6 +53,7 @@ import {
   tryDrawCredit,
   tryPayDebt,
 } from "./systems/finance";
+import { Ledger } from "./systems/ledger";
 import {
   tickMarket,
   tickWeather,
@@ -80,10 +81,20 @@ export class Game {
   totalOilSold = 0;
   totalGasSold = 0;
   totalSpilled = 0;
+  ledger = new Ledger();
+  /** Sticky objective — not overwritten by transient toasts */
+  guide =
+    "1) Road pad→battery→refinery (CARDINAL edges, not corners)  2) Drill pad / surveyed Sweet·Good  3) Trucks loop crude→battery→clean→refinery";
+  gameOver = false;
+  gameOverReason = "";
+  opsReason = "Waiting on first full operating day (revenue vs interest/opex).";
   private acc = 0;
   private lightningAcc = 0;
   private fineAcc = { t: 0 };
   private throughputDay = 1;
+  private strandedDays = new Map<string, number>();
+  private repStage = 72; // last warned threshold band
+  private interestBucket = 0;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -230,26 +241,25 @@ export class Game {
   }
 
   private truckPassable = (x: number, y: number): boolean => {
-    const t = this.tiles[y][x];
+    const t = this.tiles[y]?.[x];
+    if (!t) return false;
+    // Lease roads + pads. Buildings never block a road tile — trucks drive past jacks.
     if (t.hasRoad || t.isPad) return true;
     const b = this.buildingAt(x, y);
     return !!b && (b.kind === "battery" || b.kind === "refinery" || b.kind === "wellhead_tank");
   };
 
+  /** Trucks path through equipment; only soft-avoid other trucks' tiles */
   private blockedSet(ignoreUnitId?: string): Set<string> {
     const s = new Set<string>();
-    for (const b of this.buildings) {
-      if (b.kind === "refinery" || b.kind === "battery" || b.kind === "wellhead_tank") {
-        continue;
-      }
-      if (b.kind === "gas_flare") continue;
-      s.add(`${b.x},${b.y}`);
-    }
     for (const u of this.units) {
+      if (u.kind !== "truck") continue;
       if (ignoreUnitId && u.id === ignoreUnitId) continue;
-      s.add(`${Math.round(u.x)},${Math.round(u.y)}`);
+      // Don't hard-block — empty set was too permissive for stacking;
+      // skip blocking entirely so one stranded truck can't cork the network.
     }
-    return s;
+    void s;
+    return new Set();
   }
 
   selectedRig(): Unit | undefined {
@@ -300,10 +310,61 @@ export class Game {
     return candidates[0] ? { x: candidates[0].x, y: candidates[0].y } : null;
   }
 
-  /** Lay free spur roads from a tile to the nearest existing road (max 12 steps) */
+  /** Lay free spur roads from a tile to the nearest existing road */
   private linkToRoadNetwork(sx: number, sy: number) {
     this.tiles[sy][sx].hasRoad = true;
-    if (this.truckPassable(sx, sy) && this.hasRoadAccess(sx, sy)) return;
+    // If only diagonal roads touch this tile, pave a cardinal bridge
+    if (hasDiagonalRoadOnly(this.tiles, sx, sy)) {
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nx = sx + dx;
+        const ny = sy + dy;
+        if (nx < 0 || ny < 0 || nx >= this.config.cols || ny >= this.config.rows) {
+          continue;
+        }
+        // Bridge toward any diagonal road neighbor's shared edge
+        for (const [dx2, dy2] of [
+          [1, 1],
+          [1, -1],
+          [-1, 1],
+          [-1, -1],
+        ]) {
+          const dxn = sx + dx2;
+          const dyn = sy + dy2;
+          if (
+            dxn >= 0 &&
+            dyn >= 0 &&
+            dxn < this.config.cols &&
+            dyn < this.config.rows &&
+            this.tiles[dyn][dxn].hasRoad
+          ) {
+            // pave the cardinal step that shares an axis with the diagonal
+            if (dx === dx2 || dy === dy2) {
+              this.tiles[ny][nx].hasRoad = true;
+            }
+          }
+        }
+      }
+      // Always pave at least one cardinal toward battery if possible
+      const batt = this.buildings.find((b) => b.kind === "battery");
+      if (batt) {
+        const stepX = Math.sign(batt.x - sx);
+        const stepY = Math.sign(batt.y - sy);
+        if (stepX !== 0) {
+          const nx = sx + stepX;
+          if (nx >= 0 && nx < this.config.cols) this.tiles[sy][nx].hasRoad = true;
+        } else if (stepY !== 0) {
+          const ny = sy + stepY;
+          if (ny >= 0 && ny < this.config.rows) this.tiles[ny][sx].hasRoad = true;
+        }
+      }
+    }
+
+    if (this.hasRoadAccess(sx, sy)) return;
 
     const key = (x: number, y: number) => `${x},${y}`;
     const q: { x: number; y: number }[] = [{ x: sx, y: sy }];
@@ -317,7 +378,7 @@ export class Game {
         found = cur;
         break;
       }
-      if (came.size > 80) break;
+      if (came.size > 120) break;
       for (const [dx, dy] of [
         [1, 0],
         [-1, 0],
@@ -331,7 +392,6 @@ export class Game {
         }
         const k = key(nx, ny);
         if (came.has(k)) continue;
-        if (this.buildingAt(nx, ny)?.kind === "pumpjack") continue;
         came.set(k, key(cur.x, cur.y));
         q.push({ x: nx, y: ny });
       }
@@ -346,6 +406,34 @@ export class Game {
       this.tiles[y][x].hasRoad = true;
       walk = came.get(walk) ?? null;
     }
+  }
+
+  /** Diagnose why a truck can't reach a wellhead — specific, not generic */
+  diagnoseHaulBlock(truck: Unit, tankX: number, tankY: number): string {
+    const tile = this.tiles[tankY][tankX];
+    if (!tile.hasRoad && !this.buildingAt(tankX, tankY)) {
+      return `No road on wellhead tank tile (${tankX},${tankY}). Lay a CARDINAL road onto that tile.`;
+    }
+    if (hasDiagonalRoadOnly(this.tiles, tankX, tankY)) {
+      return `Road only touches tank on a CORNER at (${tankX},${tankY}). Trucks need a N/E/S/W edge — not diagonal.`;
+    }
+    const path = this.roadPath(truck, { x: tankX, y: tankY });
+    if (path.length) return "";
+    const batt = this.buildings.find((b) => b.kind === "battery");
+    if (batt) {
+      const toBatt = findPath(
+        this.tiles,
+        new Set(),
+        { x: tankX, y: tankY },
+        { x: batt.x, y: batt.y },
+        "road",
+        this.truckPassable,
+      );
+      if (!toBatt.length && !(tankX === batt.x && tankY === batt.y)) {
+        return `Wellhead (${tankX},${tankY}) is not on the battery road network. Connect with cardinal roads.`;
+      }
+    }
+    return `No truck route to wellhead (${tankX},${tankY}) from (${Math.round(truck.x)},${Math.round(truck.y)}). Check cardinal road continuity.`;
   }
 
   private hasRoadAccess(x: number, y: number): boolean {
@@ -383,8 +471,23 @@ export class Game {
     }
     this.player.cash -= ROAD_COST;
     this.player.opexToday += ROAD_COST;
+    this.ledger.push(this.market.day, "capex", `Road ${x},${y}`, -ROAD_COST);
     tile.hasRoad = true;
     tile.surface = "road";
+
+    // Warn if this only diagonally kisses a wellhead tank
+    const tanks = this.buildings.filter((b) => b.kind === "wellhead_tank");
+    for (const t of tanks) {
+      const manhattan = Math.abs(t.x - x) + Math.abs(t.y - y);
+      const chebyshev = Math.max(Math.abs(t.x - x), Math.abs(t.y - y));
+      if (chebyshev === 1 && manhattan === 2) {
+        this.message = `Road at ${x},${y} only touches tank (${t.x},${t.y}) on a CORNER — add a N/E/S/W edge tile.`;
+        return true;
+      }
+      if (manhattan === 1) {
+        this.linkToRoadNetwork(t.x, t.y);
+      }
+    }
     this.message = `Road laid at ${x},${y}.`;
     return true;
   }
@@ -447,6 +550,7 @@ export class Game {
 
     this.player.cash -= cost;
     this.player.opexToday += cost;
+    this.ledger.push(this.market.day, "drill", `AFE zone ${zone} @ ${x},${y}`, -cost);
     if (tile.subsurface.special) this.player.permits -= 1;
     tile.drilled = true;
     const well: Well = {
@@ -595,8 +699,16 @@ export class Game {
       this.message = `Survey costs $${EXPLORE_COST.toLocaleString()}.`;
       return false;
     }
+    const zone = this.tiles[cy][cx].subsurface.zone;
+    const rig = this.selectedRig();
+    const tier = Math.max(this.player.drillTech, rig?.tier ?? 0);
+    if (zone > tier) {
+      this.message = `Heads-up: this 3×3 is zone ${zone} — your rig is T${tier}. Survey will reveal rock, but you can't drill it until Rig+.`;
+      // still allow — information has value — but toast warns first; caller may confirm
+    }
     this.player.cash -= EXPLORE_COST;
     this.player.opexToday += EXPLORE_COST;
+    this.ledger.push(this.market.day, "explore", `3×3 survey @ ${cx},${cy}`, -EXPLORE_COST);
     this.player.explorationLevel += 1;
 
     // Fixed 3×3 (up to 9 tiles) centered on click
@@ -622,11 +734,16 @@ export class Game {
     }
 
     const targets = counts.good + counts.sweet;
+    const zoneNote =
+      zone > tier
+        ? ` Zone ${zone} needs Rig T${zone}+ before you can punch here.`
+        : "";
     this.message =
       `3×3 survey (${n} tiles): ${counts.sweet} Sweet, ${counts.good} Good, ${counts.fair} Fair, ${counts.lean} Lean, ${counts.barren} Barren. ` +
       (targets > 0
-        ? `Drill gold/green — ~90%+ hit with T0 on Good/Sweet.`
-        : `No strong targets here — survey elsewhere.`);
+        ? `Drill gold/green — ~90%+ hit on Good/Sweet.`
+        : `No strong targets here — survey elsewhere.`) +
+      zoneNote;
     return true;
   }
 
@@ -650,6 +767,7 @@ export class Game {
     }
     this.player.cash -= GAS_LINE_COST;
     this.player.opexToday += GAS_LINE_COST;
+    this.ledger.push(this.market.day, "capex", `Gas line ${x},${y}`, -GAS_LINE_COST);
     this.buildings.push({
       id: uid("gl"),
       kind: "gas_line",
@@ -685,6 +803,7 @@ export class Game {
     const batt = this.buildings.find((b) => b.kind === "battery")!;
     this.player.cash -= EXTRA_TRUCK_COST;
     this.player.opexToday += EXTRA_TRUCK_COST;
+    this.ledger.push(this.market.day, "capex", "Truck purchase", -EXTRA_TRUCK_COST);
     this.units.push({
       id: uid("trk"),
       kind: "truck",
@@ -717,6 +836,7 @@ export class Game {
     }
     this.player.cash -= UPGRADE_RIG_COST;
     this.player.opexToday += UPGRADE_RIG_COST;
+    this.ledger.push(this.market.day, "capex", `Rig upgrade → T${rig.tier + 1}`, -UPGRADE_RIG_COST);
     rig.tier += 1;
     this.player.drillTech = Math.max(this.player.drillTech, rig.tier);
     this.message = `Rig tier ${rig.tier}.`;
@@ -734,17 +854,24 @@ export class Game {
     }
     this.player.cash -= PERMIT_COST;
     this.player.opexToday += PERMIT_COST;
+    this.ledger.push(this.market.day, "opex", "Special-area permit", -PERMIT_COST);
     this.player.permits += 1;
     this.message = `Permit acquired (${this.player.permits} on hand).`;
     return true;
   }
 
   payDebt(amount = 250_000) {
+    const before = this.player.credit.debt;
     this.message = tryPayDebt(this.player, Math.min(amount, this.player.cash));
+    const paid = before - this.player.credit.debt;
+    if (paid > 0) this.ledger.push(this.market.day, "debt_pay", "Principal payment", -paid);
   }
 
   drawCredit(amount = 250_000) {
+    const before = this.player.cash;
     this.message = tryDrawCredit(this.player, amount);
+    const drew = this.player.cash - before;
+    if (drew > 0) this.ledger.push(this.market.day, "draw", "Facility draw", drew);
   }
 
   clickTile(x: number, y: number) {
@@ -804,7 +931,17 @@ export class Game {
     if (unit) {
       this.selectedUnitId = unit.id;
       if (unit.kind === "drill_rig") {
-        return `Drill rig tier ${unit.tier}${unit.busy ? " · DRILLING" : " · idle"} — Move rig, then Drill.`;
+        const drilling = this.wells.find(
+          (w) => w.status === "drilling" && unit.targetWellId === w.id,
+        );
+        if (drilling || unit.busy) {
+          const w = drilling ?? this.wells.find((x) => x.id === unit.targetWellId);
+          const pct = w
+            ? Math.min(100, (w.drillProgress / w.drillDaysNeeded) * 100)
+            : 0;
+          return `Drill rig T${unit.tier} · SPUDDING ${pct.toFixed(0)}%`;
+        }
+        return `Drill rig T${unit.tier} · idle — Move rig, then Drill.`;
       }
       return `Truck · ${unit.cargoKind} ${unit.cargo.toFixed(0)}/${unit.cargoCap} · ${unit.job}`;
     }
@@ -991,6 +1128,12 @@ export class Game {
           truck.targetBuildingId = null;
         }
         this.message = `Sold ${sold.toFixed(0)} bbl clean @ $${this.market.oilPrice.toFixed(2)} → $${revenue.toFixed(0)}.`;
+        this.ledger.push(
+          this.market.day,
+          "revenue",
+          `Clean oil ticket ${sold.toFixed(0)} bbl`,
+          revenue,
+        );
         // fall through to assign next job same tick
       }
 
@@ -1083,9 +1226,20 @@ export class Game {
         truck.job = "to_pickup";
         truck.targetBuildingId = tank.id;
         if (!assignPath(truck, tank.x, tank.y)) {
-          this.message = "Truck can't reach wellhead — check roads.";
-        } else if (!at(truck, tank.x, tank.y)) {
-          this.message = "Truck looping to wellhead for crude.";
+          this.linkToRoadNetwork(tank.x, tank.y);
+          if (!assignPath(truck, tank.x, tank.y)) {
+            const days = (this.strandedDays.get(tank.id) ?? 0) + 0.02;
+            this.strandedDays.set(tank.id, days);
+            if (days >= 0.5) {
+              this.message = this.diagnoseHaulBlock(truck, tank.x, tank.y);
+              this.guide = `STRANDED WELLHEAD (${tank.x},${tank.y}): ${this.message}`;
+            }
+          }
+        } else {
+          this.strandedDays.delete(tank.id);
+          if (!at(truck, tank.x, tank.y)) {
+            this.message = "Truck looping to wellhead for crude.";
+          }
         }
         continue;
       }
@@ -1169,35 +1323,158 @@ export class Game {
     }
   }
 
+  /** Snapshot for facility dashboard */
+  dashboard() {
+    const wells = this.wells.filter((w) => w.status === "producing");
+    const oilBopd = wells.reduce((s, w) => s + w.oilRate, 0);
+    const gasMcfd = wells.reduce((s, w) => s + w.gasRate, 0);
+    const batt = this.buildings.find((b) => b.kind === "battery");
+    const trucks = this.units.filter((u) => u.kind === "truck");
+    const stranded = [...this.strandedDays.entries()].filter(([, d]) => d >= 0.5);
+    const interestDay =
+      this.player.credit.debt * (this.player.credit.apr / 365);
+    return {
+      oilBopd,
+      gasMcfd,
+      wellCount: wells.length,
+      crude: batt?.crude ?? 0,
+      crudeCap: batt?.crudeCap ?? 0,
+      clean: batt?.clean ?? 0,
+      cleanCap: batt?.cleanCap ?? 0,
+      trucks: trucks.map((t) => ({
+        id: t.id,
+        job: t.job,
+        cargo: t.cargo,
+        kind: t.cargoKind,
+      })),
+      stranded: stranded.length,
+      interestPerDay: interestDay,
+      interestToday: this.player.credit.interestPaidToday,
+      revenueToday: this.player.revenueToday,
+      opexToday: this.player.opexToday,
+      rep: this.player.reputation,
+      opsReason: this.opsReason,
+      gameOver: this.gameOver,
+      gameOverReason: this.gameOverReason,
+      ledger: this.ledger.recent(10),
+      guide: this.guide,
+    };
+  }
+
+  recenterHint(): { x: number; y: number } {
+    const pad = this.tiles.flatMap((row, y) =>
+      row.map((t, x) => (t.isPad ? { x, y } : null)),
+    ).find(Boolean);
+    return pad ?? { x: this.config.cols / 2, y: this.config.rows / 2 };
+  }
+
+  private tickRepConsequences() {
+    const r = this.player.reputation;
+    if (r <= 0 && !this.gameOver) {
+      this.gameOver = true;
+      this.gameOverReason =
+        "Reputation hit 0 — regulators shut in the lease. Flaring, spills, and unpaid fines closed you down.";
+      this.message = this.gameOverReason;
+      this.guide = "GAME OVER — hit Reset Lease to try again.";
+      for (const w of this.wells) {
+        if (w.status === "producing") w.status = "shut_in";
+      }
+      return;
+    }
+    if (r < 25 && this.repStage > 25) {
+      this.repStage = 25;
+      this.message =
+        "CRITICAL REP — shut-in order imminent. Stop flaring (gas lines) and clear stranded tanks.";
+      this.guide =
+        "REP CRITICAL (<25): build gas lines, fix haul routes, avoid spills — or face shutdown at 0.";
+    } else if (r < 45 && this.repStage > 45) {
+      this.repStage = 45;
+      this.message = "Rep warning — fines active below 45. Flaring and spills are eating you.";
+    } else if (r >= 45 && this.repStage < 45) {
+      this.repStage = Math.min(72, Math.floor(r));
+    }
+  }
+
   update(dtSec: number) {
+    if (this.gameOver) return;
     this.acc += dtSec;
     const step = this.config.tickSeconds;
     while (this.acc >= step) {
       this.acc -= step;
-      const dtHours = 0.35;
+      const stormMul =
+        this.weather.kind === "storm" || this.weather.kind === "lightning_cell"
+          ? 1 - this.weather.intensity * 0.5
+          : 1;
+      const dtHours = 0.35 * (this.weather.kind === "clear" ? 1 : 1);
       const dtDays = dtHours / 24;
 
       rollDayCounters(this.player, this.market.day);
+      const interestPerDay =
+        (this.player.credit.debt * this.player.credit.apr) / 365;
+      this.opsReason = this.player.operatingGreen
+        ? `GREEN: yesterday's tickets beat opex+interest.`
+        : `RED: daily burn (interest ~$${interestPerDay.toFixed(0)}/day on $${(this.player.credit.debt / 1e6).toFixed(2)}M debt) outruns sales. Haul clean oil.`;
+
       this.weather = tickWeather(this.weather, dtHours);
       this.market = tickMarket(this.market, dtDays);
-      accrueInterest(this.player, dtDays);
+
+      const interest = accrueInterest(this.player, dtDays);
+      this.interestBucket += interest;
+      if (this.interestBucket >= 500) {
+        this.ledger.push(
+          this.market.day,
+          "interest",
+          "Debt interest",
+          -this.interestBucket,
+        );
+        this.interestBucket = 0;
+      }
       refreshCreditLimit(this.player, this.assetValue());
 
       const fineMsg = tickFines(this.player, dtDays, this.fineAcc);
-      if (fineMsg) this.message = fineMsg;
+      if (fineMsg) {
+        this.message = fineMsg;
+        const m = /\$([0-9,]+)/.exec(fineMsg);
+        if (m) {
+          this.ledger.push(
+            this.market.day,
+            "fine",
+            "Regulatory fine",
+            -Number(m[1].replace(/,/g, "")),
+          );
+        }
+      }
 
-      this.moveUnits(dtHours);
-      this.updateDrilling(dtDays);
+      this.tickRepConsequences();
+      if (this.gameOver) return;
 
+      // Weather: storms slow trucks; lightning pauses drilling
+      this.moveUnits(dtHours * (0.55 + 0.45 * stormMul));
+      if (this.weather.kind === "lightning_cell") {
+        // Drilling stands down in lightning — authentic field rule
+        for (const w of this.wells) {
+          if (w.status === "drilling") {
+            // no progress this tick
+          }
+        }
+      } else {
+        this.updateDrilling(dtDays);
+      }
+
+      const wxFactor =
+        this.weather.kind === "storm" ? 1 - this.weather.intensity * 0.35 : 1;
       const prod = simulateProduction(
         this.wells,
         this.buildings,
         this.player,
         this.market.gasPrice,
-        dtDays,
+        dtDays * wxFactor,
       );
       this.totalGasSold += prod.gasSold;
       this.totalSpilled += prod.spilled;
+      for (const c of prod.cleanups ?? []) {
+        this.ledger.push(this.market.day, "cleanup", c.label, -c.amount);
+      }
       if (prod.messages[0]) this.message = prod.messages[0];
 
       this.treatBattery(dtDays);

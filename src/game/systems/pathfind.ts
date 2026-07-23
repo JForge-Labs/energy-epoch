@@ -4,7 +4,7 @@ export type PathMode = "any" | "road";
 
 /**
  * 4-connected BFS.
- * road mode: only tiles with hasRoad / isPad / allowlisted goals
+ * road mode: roadPassable tiles, goal always allowed.
  */
 export function findPath(
   tiles: Tile[][],
@@ -28,6 +28,7 @@ export function findPath(
     return t.hasRoad || t.isPad;
   };
 
+  // If start tile isn't passable in road mode, still allow leaving it
   const q: { x: number; y: number }[] = [{ ...from }];
   const came = new Map<string, string | null>();
   came.set(key(from.x, from.y), null);
@@ -68,4 +69,62 @@ export function findPath(
   path.reverse();
   path.shift();
   return path;
+}
+
+/** Cardinal (4-way) road neighbors — diagonals do NOT count for trucks */
+export function cardinalRoadNeighbors(
+  tiles: Tile[][],
+  x: number,
+  y: number,
+  passable: (x: number, y: number) => boolean,
+): { x: number; y: number }[] {
+  const rows = tiles.length;
+  const cols = tiles[0]?.length ?? 0;
+  const out: { x: number; y: number }[] = [];
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+    if (passable(nx, ny)) out.push({ x: nx, y: ny });
+  }
+  return out;
+}
+
+export function hasDiagonalRoadOnly(
+  tiles: Tile[][],
+  x: number,
+  y: number,
+): boolean {
+  const rows = tiles.length;
+  const cols = tiles[0]?.length ?? 0;
+  let diag = false;
+  let card = false;
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+    if (tiles[ny][nx].hasRoad) card = true;
+  }
+  for (const [dx, dy] of [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+    if (tiles[ny][nx].hasRoad) diag = true;
+  }
+  return diag && !card;
 }
