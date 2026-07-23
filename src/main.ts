@@ -168,6 +168,7 @@ function resetLease() {
   game = new Game();
   cam = createCamera(game.config.cols, game.config.rows);
   clearConfirm();
+  gameoverEl.classList.remove("is-open");
   gameoverEl.hidden = true;
   pinnedInspect = "";
   inspectBody.textContent = "Hover tiles · Right-click to pin";
@@ -485,7 +486,11 @@ function syncDash() {
 
   if (d.gameOver) {
     gameoverEl.hidden = false;
+    gameoverEl.classList.add("is-open");
     document.querySelector("#gameover-reason")!.textContent = d.gameOverReason;
+  } else {
+    gameoverEl.hidden = true;
+    gameoverEl.classList.remove("is-open");
   }
 }
 

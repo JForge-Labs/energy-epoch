@@ -235,13 +235,21 @@ body {
   text-align: center;
 }
 
+.confirm-banner[hidden] {
+  display: none !important;
+}
+
 .gameover {
   position: absolute;
   inset: 0;
   z-index: 20;
   background: rgba(8, 10, 8, 0.72);
-  display: grid;
+  display: none;
   place-items: center;
+}
+
+.gameover.is-open {
+  display: grid;
 }
 
 .gameover-card {
