@@ -1,8 +1,11 @@
 import type { ZoneTier } from "../types";
 
 export const WELLHEAD_CAP_BBL = 100;
-export const BATTERY_CAP_BBL = 2_000;
+export const BATTERY_CRUDE_CAP_BBL = 1_500;
+export const BATTERY_CLEAN_CAP_BBL = 1_500;
 export const TRUCK_CAP_BBL = 180;
+/** Battery treats crude → clean (bbl / sim-day) */
+export const BATTERY_TREAT_BBL_PER_DAY = 480;
 
 export const FLARE_REP_PER_MCF = 0.002;
 export const GAS_SALE_REP_PER_MCF = 0.0015;
@@ -17,7 +20,7 @@ export const FACILITY_PACKAGE_COST = 4_200_000;
 export const STARTING_WORKING_CASH = FACILITY_LIMIT - FACILITY_PACKAGE_COST;
 
 /** Refinery slot included in facility (bbl/day intake) */
-export const STARTER_REFINERY_SLOT_BPD = 400;
+export const STARTER_REFINERY_SLOT_BPD = 1_200;
 
 export const ROAD_COST = 1_200;
 export const EXPLORE_COST = 40_000;

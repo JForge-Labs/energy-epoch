@@ -108,12 +108,12 @@ export function simulateProduction(
     }
   }
 
-  // Battery overflow spills
+  // Battery crude overflow spills
   for (const b of buildings) {
     if (b.kind !== "battery" || !b.online) continue;
-    if (b.oil > b.oilCap) {
-      const overflow = b.oil - b.oilCap;
-      b.oil = b.oilCap;
+    if (b.crude > b.crudeCap) {
+      const overflow = b.crude - b.crudeCap;
+      b.crude = b.crudeCap;
       result.spilled += overflow;
       const cleanup = overflow * SPILL_CLEANUP_PER_BBL;
       player.cash -= cleanup;
@@ -123,7 +123,7 @@ export function simulateProduction(
         player.reputation - overflow * SPILL_REP_PER_BBL,
       );
       result.messages.push(
-        `Battery spill ${overflow.toFixed(0)} bbl — get trucks moving.`,
+        `Battery crude spill ${overflow.toFixed(0)} bbl — haul clean / treat faster.`,
       );
     }
   }

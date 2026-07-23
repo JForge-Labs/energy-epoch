@@ -12,7 +12,9 @@ import type {
   ZoneTier,
 } from "./types";
 import {
-  BATTERY_CAP_BBL,
+  BATTERY_CLEAN_CAP_BBL,
+  BATTERY_CRUDE_CAP_BBL,
+  BATTERY_TREAT_BBL_PER_DAY,
   DEFAULT_CONFIG,
   DRILL_COST,
   DRILL_DAYS,
@@ -122,7 +124,6 @@ export class Game {
     const ref = refineryAnchor(this.config.cols, this.config.rows);
 
     this.tiles[pad.y][pad.x].isPad = true;
-    // Seed a short starter road stub so the player sees the idea — still must connect
     this.tiles[pad.y][pad.x].hasRoad = true;
     this.tiles[batt.y][batt.x].hasRoad = true;
     this.tiles[ref.y][ref.x].hasRoad = true;
@@ -133,7 +134,11 @@ export class Game {
       x: batt.x,
       y: batt.y,
       oil: 0,
-      oilCap: BATTERY_CAP_BBL,
+      oilCap: 0,
+      crude: 0,
+      crudeCap: BATTERY_CRUDE_CAP_BBL,
+      clean: 0,
+      cleanCap: BATTERY_CLEAN_CAP_BBL,
       wellId: null,
       online: true,
       hp: 100,
@@ -146,6 +151,10 @@ export class Game {
       y: ref.y,
       oil: 0,
       oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
       wellId: null,
       online: true,
       hp: 100,
@@ -161,6 +170,7 @@ export class Game {
       path: [],
       cargo: 0,
       cargoCap: 0,
+      cargoKind: "none",
       busy: false,
       targetWellId: null,
       targetBuildingId: null,
@@ -176,6 +186,7 @@ export class Game {
       path: [],
       cargo: 0,
       cargoCap: TRUCK_CAP_BBL,
+      cargoKind: "none",
       busy: false,
       targetWellId: null,
       targetBuildingId: null,
@@ -496,6 +507,10 @@ export class Game {
       y: well.y,
       oil: 0,
       oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
       wellId: well.id,
       online: true,
       hp: 100,
@@ -542,6 +557,10 @@ export class Game {
         y: spot.y,
         oil: 0,
         oilCap: WELLHEAD_CAP_BBL,
+        crude: 0,
+        crudeCap: 0,
+        clean: 0,
+        cleanCap: 0,
         wellId: well.id,
         online: true,
         hp: 100,
@@ -559,6 +578,10 @@ export class Game {
       y: well.y,
       oil: 0,
       oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
       wellId: well.id,
       online: true,
       hp: 50,
@@ -634,6 +657,10 @@ export class Game {
       y,
       oil: 0,
       oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
       wellId: null,
       online: true,
       hp: 100,
@@ -666,6 +693,7 @@ export class Game {
       path: [],
       cargo: 0,
       cargoCap: TRUCK_CAP_BBL,
+      cargoKind: "none",
       busy: false,
       targetWellId: null,
       targetBuildingId: null,
@@ -778,7 +806,7 @@ export class Game {
       if (unit.kind === "drill_rig") {
         return `Drill rig tier ${unit.tier}${unit.busy ? " · DRILLING" : " · idle"} — Move rig, then Drill.`;
       }
-      return `Truck · cargo ${unit.cargo.toFixed(0)}/${unit.cargoCap} bbl · job: ${unit.job}`;
+      return `Truck · ${unit.cargoKind} ${unit.cargo.toFixed(0)}/${unit.cargoCap} · ${unit.job}`;
     }
 
     const well = this.wellAt(x, y);
@@ -802,14 +830,13 @@ export class Game {
     if (b) {
       if (b.kind === "wellhead_tank") {
         const fill = b.oilCap ? ((b.oil / b.oilCap) * 100).toFixed(0) : "0";
-        return `Wellhead tank · ${b.oil.toFixed(1)}/${b.oilCap} bbl (${fill}% full) — truck hauls to battery`;
+        return `Wellhead crude · ${b.oil.toFixed(1)}/${b.oilCap} bbl (${fill}%) → truck → battery`;
       }
       if (b.kind === "battery") {
-        const fill = b.oilCap ? ((b.oil / b.oilCap) * 100).toFixed(0) : "0";
-        return `Tank battery · ${b.oil.toFixed(0)}/${b.oilCap} bbl (${fill}%) — trucks haul to refinery`;
+        return `Battery · crude ${b.crude.toFixed(0)}/${b.crudeCap} · clean ${b.clean.toFixed(0)}/${b.cleanCap} (treat→refinery)`;
       }
       if (b.kind === "refinery") {
-        return `Refinery slot · ${b.throughputUsed?.toFixed(0) ?? 0}/${b.throughputCap} bbl today @ $${this.market.oilPrice.toFixed(2)}`;
+        return `Refinery · clean sales ${b.throughputUsed?.toFixed(0) ?? 0}/${b.throughputCap} bbl today @ $${this.market.oilPrice.toFixed(2)}`;
       }
       if (b.kind === "pumpjack") {
         const w = this.wells.find((w) => w.id === b.wellId);
@@ -905,31 +932,51 @@ export class Game {
     const refinery = this.buildings.find((b) => b.kind === "refinery");
     if (!battery || !refinery) return;
 
-    // Reset daily throughput
     if (Math.floor(this.market.day) !== this.throughputDay) {
       this.throughputDay = Math.floor(this.market.day);
       refinery.throughputUsed = 0;
     }
 
+    const at = (u: Unit, x: number, y: number) =>
+      Math.round(u.x) === x && Math.round(u.y) === y;
+
+    const assignPath = (truck: Unit, x: number, y: number): boolean => {
+      if (at(truck, x, y)) return true;
+      const path = this.roadPath(truck, { x, y });
+      if (!path.length) {
+        this.linkToRoadNetwork(x, y);
+        const retry = this.roadPath(truck, { x, y });
+        if (!retry.length) return false;
+        truck.path = retry;
+      } else {
+        truck.path = path;
+      }
+      truck.busy = true;
+      return true;
+    };
+
+    const fullestWellhead = () =>
+      this.buildings
+        .filter((b) => b.kind === "wellhead_tank" && b.online && b.oil >= 2)
+        .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap))[0];
+
     for (const truck of this.units.filter((u) => u.kind === "truck")) {
       if (truck.path.length) continue;
 
-      // At refinery with cargo → sell within slot
-      if (
-        truck.cargo > 0 &&
-        Math.round(truck.x) === refinery.x &&
-        Math.round(truck.y) === refinery.y
-      ) {
+      // --- Arrive / act at destination ---
+
+      // Sell clean oil at refinery
+      if (truck.cargoKind === "clean" && truck.cargo > 0 && at(truck, refinery.x, refinery.y)) {
         const room = Math.max(
           0,
-          (refinery.throughputCap ?? 0) - (refinery.throughputUsed ?? 0),
+          (refinery.throughputCap ?? 9999) - (refinery.throughputUsed ?? 0),
         );
-        const sold = Math.min(truck.cargo, room);
-        if (sold <= 0) {
-          this.message = "Refinery slot full today — oil waiting.";
-          truck.job = "idle";
+        if (room <= 0) {
+          this.message = "Refinery slot full today — truck waiting with clean oil.";
+          truck.job = "to_refinery";
           continue;
         }
+        const sold = Math.min(truck.cargo, room);
         const revenue = sold * this.market.oilPrice;
         this.player.cash += revenue;
         this.player.revenueToday += revenue;
@@ -938,139 +985,145 @@ export class Game {
         truck.cargo -= sold;
         if (truck.cargo < 0.5) {
           truck.cargo = 0;
-          truck.busy = false;
+          truck.cargoKind = "none";
           truck.job = "idle";
+          truck.busy = false;
           truck.targetBuildingId = null;
         }
-        this.message = `Ticket ${sold.toFixed(0)} bbl @ $${this.market.oilPrice.toFixed(2)} → $${revenue.toFixed(0)}.`;
-        continue;
+        this.message = `Sold ${sold.toFixed(0)} bbl clean @ $${this.market.oilPrice.toFixed(2)} → $${revenue.toFixed(0)}.`;
+        // fall through to assign next job same tick
       }
 
-      // Cargo destined for refinery (from battery)
-      if (truck.cargo > 0 && truck.job === "to_refinery") {
-        const path = this.roadPath(truck, { x: refinery.x, y: refinery.y });
-        if (!path.length) {
-          this.message = "No road to refinery — build the corridor.";
-          continue;
-        }
-        truck.path = path;
-        truck.busy = true;
-        continue;
-      }
-
-      // Cargo from wellhead → battery
-      if (truck.cargo > 0 && truck.job === "to_battery") {
-        const path = this.roadPath(truck, { x: battery.x, y: battery.y });
-        if (!path.length) {
-          this.message = "No road to battery.";
-          continue;
-        }
-        truck.path = path;
-        truck.busy = true;
-        continue;
-      }
-
-      // Arrive battery with wellhead oil → unload into battery, then maybe load for refinery
-      if (
-        truck.cargo > 0 &&
-        Math.round(truck.x) === battery.x &&
-        Math.round(truck.y) === battery.y &&
-        truck.job === "to_battery"
-      ) {
-        const room = battery.oilCap - battery.oil;
+      // Unload crude at battery
+      if (truck.cargoKind === "crude" && truck.cargo > 0 && at(truck, battery.x, battery.y)) {
+        const room = Math.max(0, battery.crudeCap - battery.crude);
         const into = Math.min(truck.cargo, room);
-        battery.oil += into;
+        battery.crude += into;
         truck.cargo -= into;
-        if (truck.cargo > 0.5) {
-          this.message = "Battery full — spill risk. Haul to refinery from battery.";
+        if (truck.cargo < 0.5) {
+          truck.cargo = 0;
+          truck.cargoKind = "none";
+          truck.job = "idle";
+          truck.busy = false;
+          this.message = `Crude delivered · battery crude ${battery.crude.toFixed(0)} bbl.`;
+        } else {
+          this.message = "Battery crude full — treating/hauling clean to free space.";
+          truck.job = "idle";
         }
-        truck.cargo = 0;
-        truck.job = "idle";
-        // Immediately try to load battery → refinery if inventory high
       }
 
-      // Load from battery toward refinery if battery has oil
+      // Load clean at battery for refinery run
       if (
         truck.cargo < 1 &&
-        battery.oil >= 40 &&
-        Math.round(truck.x) === battery.x &&
-        Math.round(truck.y) === battery.y
+        at(truck, battery.x, battery.y) &&
+        battery.clean >= 5
       ) {
-        const load = Math.min(truck.cargoCap, battery.oil);
-        battery.oil -= load;
-        truck.cargo = load;
-        truck.job = "to_refinery";
-        truck.targetBuildingId = refinery.id;
-        continue;
-      }
-
-      // Go to battery to load for refinery
-      if (truck.cargo < 1 && battery.oil >= 80 && truck.job === "idle") {
-        const path = this.roadPath(truck, { x: battery.x, y: battery.y });
-        if (path.length || (Math.round(truck.x) === battery.x && Math.round(truck.y) === battery.y)) {
-          truck.path = path;
-          truck.job = "to_battery";
-          truck.targetBuildingId = battery.id;
-          truck.busy = true;
-          continue;
+        // Prefer clearing wellheads if they're near full; else haul clean
+        const urgent = fullestWellhead();
+        const wellUrgent = urgent && urgent.oil / urgent.oilCap >= 0.7;
+        if (!wellUrgent || battery.crude >= battery.crudeCap * 0.9) {
+          const load = Math.min(truck.cargoCap, battery.clean);
+          battery.clean -= load;
+          truck.cargo = load;
+          truck.cargoKind = "clean";
+          truck.job = "to_refinery";
+          truck.targetBuildingId = refinery.id;
+          this.message = `Loaded ${load.toFixed(0)} bbl clean → refinery.`;
         }
       }
 
-      // Pickup wellhead tanks — haul as soon as a few barrels accumulate
+      // Load crude at wellhead
       if (truck.cargo < 1) {
-        const tanks = this.buildings
-          .filter(
-            (b) =>
-              b.kind === "wellhead_tank" &&
-              b.online &&
-              b.oil >= 3,
-          )
-          .sort((a, b) => b.oil / b.oilCap - a.oil / a.oilCap);
-        const tank = tanks[0];
-        if (!tank) {
-          // Nothing to haul yet — if producing wells exist, explain
-          const waiting = this.buildings.find(
-            (b) => b.kind === "wellhead_tank" && b.oil > 0 && b.oil < 3,
-          );
-          if (waiting && truck.job === "idle") {
-            // stay quiet; oil still accumulating
-          }
-          continue;
-        }
-
-        if (Math.round(truck.x) === tank.x && Math.round(truck.y) === tank.y) {
+        const tank = this.buildings.find(
+          (b) =>
+            b.kind === "wellhead_tank" &&
+            at(truck, b.x, b.y) &&
+            b.oil >= 2,
+        );
+        if (tank) {
           const load = Math.min(truck.cargoCap, tank.oil);
           tank.oil -= load;
           truck.cargo = load;
+          truck.cargoKind = "crude";
           truck.job = "to_battery";
           truck.targetBuildingId = battery.id;
-          this.message = `Truck loaded ${load.toFixed(0)} bbl at wellhead → battery.`;
-          continue;
-        }
-
-        const path = this.roadPath(truck, { x: tank.x, y: tank.y });
-        if (path.length) {
-          truck.path = path;
-          truck.busy = true;
-          truck.job = "to_pickup";
-          truck.targetBuildingId = tank.id;
-          this.message = "Truck en route to wellhead tank.";
-        } else {
-          // Try auto-link then path again
-          this.linkToRoadNetwork(tank.x, tank.y);
-          const retry = this.roadPath(truck, { x: tank.x, y: tank.y });
-          if (retry.length) {
-            truck.path = retry;
-            truck.busy = true;
-            truck.job = "to_pickup";
-            truck.targetBuildingId = tank.id;
-            this.message = "Spur road linked — truck heading to wellhead.";
-          } else {
-            this.message =
-              "Truck can't reach wellhead — build a continuous road to the battery.";
-          }
+          this.message = `Loaded ${load.toFixed(0)} bbl crude → battery.`;
         }
       }
+
+      // --- Assign movement while carrying ---
+      if (truck.cargo > 0 && truck.cargoKind === "crude") {
+        truck.job = "to_battery";
+        if (!assignPath(truck, battery.x, battery.y)) {
+          this.message = "No road for crude haul to battery.";
+        }
+        continue;
+      }
+      if (truck.cargo > 0 && truck.cargoKind === "clean") {
+        truck.job = "to_refinery";
+        if (!assignPath(truck, refinery.x, refinery.y)) {
+          this.message = "No road for clean haul to refinery.";
+        }
+        continue;
+      }
+
+      // --- Empty truck: pick next job (continuous loop) ---
+      const tank = fullestWellhead();
+      const wellFill = tank ? tank.oil / Math.max(1, tank.oilCap) : 0;
+      const canTakeCrude = battery.crude < battery.crudeCap - 1;
+      const hasClean = battery.clean >= 5;
+
+      // Keep wellheads from topping out, but keep clean oil moving to refinery
+      const preferWellhead =
+        !!tank &&
+        canTakeCrude &&
+        (wellFill >= 0.4 || !hasClean || battery.clean < truck.cargoCap * 0.5);
+
+      if (preferWellhead && tank) {
+        truck.job = "to_pickup";
+        truck.targetBuildingId = tank.id;
+        if (!assignPath(truck, tank.x, tank.y)) {
+          this.message = "Truck can't reach wellhead — check roads.";
+        } else if (!at(truck, tank.x, tank.y)) {
+          this.message = "Truck looping to wellhead for crude.";
+        }
+        continue;
+      }
+
+      if (hasClean) {
+        truck.job = "to_battery";
+        truck.targetBuildingId = battery.id;
+        if (!assignPath(truck, battery.x, battery.y)) {
+          this.message = "No road to battery for clean pickup.";
+        } else if (!at(truck, battery.x, battery.y)) {
+          this.message = "Truck to battery for clean oil.";
+        }
+        continue;
+      }
+
+      if (tank && canTakeCrude) {
+        truck.job = "to_pickup";
+        truck.targetBuildingId = tank.id;
+        assignPath(truck, tank.x, tank.y);
+        continue;
+      }
+
+      if (!at(truck, battery.x, battery.y)) {
+        assignPath(truck, battery.x, battery.y);
+      }
+      truck.job = "idle";
+      truck.busy = false;
+    }
+  }
+
+  /** Treat crude → clean at the battery */
+  private treatBattery(dtDays: number) {
+    for (const b of this.buildings) {
+      if (b.kind !== "battery" || !b.online) continue;
+      const room = Math.max(0, b.cleanCap - b.clean);
+      const turn = Math.min(b.crude, room, BATTERY_TREAT_BBL_PER_DAY * dtDays);
+      b.crude -= turn;
+      b.clean += turn;
     }
   }
 
@@ -1097,8 +1150,16 @@ export class Game {
       (t.kind === "battery" || t.kind === "wellhead_tank") &&
       Math.random() < 0.35
     ) {
-      const loss = Math.min(t.oil, 20 + Math.random() * 40);
-      t.oil -= loss;
+      let loss = 0;
+      if (t.kind === "wellhead_tank") {
+        loss = Math.min(t.oil, 20 + Math.random() * 40);
+        t.oil -= loss;
+      } else {
+        loss = Math.min(t.crude + t.clean, 20 + Math.random() * 40);
+        const fromCrude = Math.min(t.crude, loss);
+        t.crude -= fromCrude;
+        t.clean -= loss - fromCrude;
+      }
       this.totalSpilled += loss;
       this.spills.push({ x: t.x, y: t.y, barrels: loss, age: 0 });
       this.player.reputation = Math.max(0, this.player.reputation - loss * 0.04);
@@ -1139,6 +1200,7 @@ export class Game {
       this.totalSpilled += prod.spilled;
       if (prod.messages[0]) this.message = prod.messages[0];
 
+      this.treatBattery(dtDays);
       this.updateTrucks();
       this.tickLightning(dtHours);
 

@@ -57,20 +57,31 @@ export interface Building {
   kind: BuildingKind;
   x: number;
   y: number;
+  /** Wellhead crude inventory */
   oil: number;
   oilCap: number;
+  /** Battery crude (from wells) */
+  crude: number;
+  crudeCap: number;
+  /** Battery clean oil (treated, to refinery) */
+  clean: number;
+  cleanCap: number;
   wellId: string | null;
   online: boolean;
   hp: number;
-  /** Refinery: contracted throughput bbl/day */
   throughputCap?: number;
-  /** Refinery: bbl received today (resets) */
   throughputUsed?: number;
 }
 
 export type UnitKind = "drill_rig" | "truck";
 
-export type TruckJob = "idle" | "to_pickup" | "to_battery" | "to_refinery";
+export type TruckJob =
+  | "idle"
+  | "to_pickup"
+  | "to_battery"
+  | "to_refinery";
+
+export type CargoKind = "none" | "crude" | "clean";
 
 export interface Unit {
   id: string;
@@ -80,9 +91,9 @@ export interface Unit {
   path: { x: number; y: number }[];
   cargo: number;
   cargoCap: number;
+  cargoKind: CargoKind;
   busy: boolean;
   targetWellId: string | null;
-  /** Pickup building id (wellhead or battery) */
   targetBuildingId: string | null;
   job: TruckJob;
   tier: number;
@@ -105,13 +116,9 @@ export interface WeatherState {
 }
 
 export interface CreditFacility {
-  /** Outstanding principal */
   debt: number;
-  /** Current max draw */
   limit: number;
-  /** APR as fraction, e.g. 0.11 */
   apr: number;
-  /** Cash interest accrued this period (HUD) */
   interestPaidToday: number;
   dayStamp: number;
 }
@@ -122,10 +129,8 @@ export interface PlayerState {
   name: string;
   explorationLevel: number;
   drillTech: number;
-  /** Special-zone permits held */
   permits: number;
   credit: CreditFacility;
-  /** Trailing operating income signal */
   operatingGreen: boolean;
   revenueToday: number;
   opexToday: number;
@@ -148,7 +153,6 @@ export interface GameConfig {
   cols: number;
   rows: number;
   tileSize: number;
-  /** Working cash after facility package */
   startingCash: number;
   tickSeconds: number;
 }

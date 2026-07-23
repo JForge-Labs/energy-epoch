@@ -176,13 +176,16 @@ function drawBuilding(
       ctx.fillStyle = C.battery;
       ctx.fillRect(s * 0.05, s * 0.2, s * 0.4, s * 0.6);
       ctx.fillRect(s * 0.55, s * 0.2, s * 0.4, s * 0.6);
-      const fill = b.oilCap ? Math.min(1, b.oil / b.oilCap) : 0;
+      const crudeFill = b.crudeCap ? Math.min(1, b.crude / b.crudeCap) : 0;
+      const cleanFill = b.cleanCap ? Math.min(1, b.clean / b.cleanCap) : 0;
       ctx.fillStyle = "#1a1008";
-      ctx.fillRect(s * 0.1, s * 0.7 - s * 0.45 * fill, s * 0.3, s * 0.45 * fill);
-      ctx.fillRect(s * 0.6, s * 0.7 - s * 0.45 * fill, s * 0.3, s * 0.45 * fill);
+      ctx.fillRect(s * 0.1, s * 0.7 - s * 0.45 * crudeFill, s * 0.3, s * 0.45 * crudeFill);
+      ctx.fillStyle = "#c8b070";
+      ctx.fillRect(s * 0.6, s * 0.7 - s * 0.45 * cleanFill, s * 0.3, s * 0.45 * cleanFill);
       ctx.fillStyle = C.select;
-      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
-      ctx.fillText("BATTERY", 0, s * 0.14);
+      ctx.font = `bold ${Math.max(8, Math.floor(size * 0.16))}px monospace`;
+      ctx.fillText("CRUDE", 0, s * 0.14);
+      ctx.fillText("CLEAN", s * 0.5, s * 0.14);
       break;
     }
     case "gas_flare": {
@@ -240,7 +243,7 @@ function drawUnit(
     ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
     ctx.fillText("TRUCK", px + size * 0.18, py + size * 0.25);
     if (u.cargo > 0) {
-      ctx.fillStyle = "#1a1008";
+      ctx.fillStyle = u.cargoKind === "clean" ? "#c8b070" : "#1a1008";
       ctx.fillRect(
         px + size * 0.2,
         py + size * 0.35,

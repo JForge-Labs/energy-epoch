@@ -17,11 +17,12 @@ Wildcat with **simple random** well outcomes (oil/gas rates + decline) — evolv
 ## Logistics spine (locked)
 
 ```
-Well / pad  --roads-->  Tank battery  --roads-->  Refinery (slot)
+Wellhead (crude) --truck/roads--> Battery (treat crude→clean) --truck/roads--> Refinery (sell clean)
 ```
 
 - Player **builds roads**. Trucks travel on roads (and pads / batteries / refinery).
-- Batteries are the lease storage hubs (not electrical).
+- Batteries store **crude**, treat to **clean**, then trucks haul clean to the refinery.
+- Trucks loop continuously: keep wellheads from filling, keep clean moving to sales.
 - Later epoch: **pipelines, pumps, compression, gas plants** that purchase commodities.
 
 ## Core loop (v1)
