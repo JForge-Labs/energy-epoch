@@ -65,7 +65,7 @@ app.innerHTML = `
     <div class="hover-tip" id="hover-tip"></div>
     <div class="inspect-panel" id="inspect-panel">
       <div class="inspect-title">Inspect</div>
-      <div id="inspect-body">Hover tiles · Right-click to pin</div>
+      <div id="inspect-body">Hover tiles · Right-click for actions</div>
       <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span> · Roads need N/E/S/W edges</div>
     </div>
     <div class="dash-panel" id="dash-panel">
@@ -89,7 +89,7 @@ app.innerHTML = `
     </div>
   </div>
   <footer class="bottom-bar">
-    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay · Right-click for actions</div>
+    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay · Right-click for actions · Click a panel title (or C) to collapse</div>
     <button class="tool-btn active" data-tool="select" type="button">Select</button>
     <button class="tool-btn" data-tool="road" type="button">Road</button>
     <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
@@ -269,7 +269,7 @@ function resetLease() {
   gameoverEl.classList.remove("is-open");
   gameoverEl.hidden = true;
   pinnedInspect = "";
-  inspectBody.textContent = "Hover tiles · Right-click to pin";
+  inspectBody.textContent = "Hover tiles · Right-click for actions";
   flash("Lease reset. Build cardinal roads pad→battery→refinery, then drill.");
   syncAll();
   saveGame();
@@ -291,6 +291,52 @@ document.querySelectorAll(".spd-btn").forEach((btn) => {
     saveGame();
   });
 });
+
+// --- Collapsible panels (maximize map view) ---
+const UI_KEY = "energy-epoch-ui";
+type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean };
+function loadUi(): UiState {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveUi() {
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify(uiState));
+  } catch {
+    /* non-fatal */
+  }
+}
+const uiState = loadUi();
+const PANELS: { sel: string; key: keyof UiState }[] = [
+  { sel: "#inspect-panel", key: "inspect" },
+  { sel: "#dash-panel", key: "dash" },
+  { sel: "#ledger-panel", key: "ledger" },
+];
+function applyPanel(sel: string, collapsed: boolean) {
+  document.querySelector(sel)?.classList.toggle("panel-collapsed", collapsed);
+}
+for (const p of PANELS) {
+  const panel = document.querySelector(p.sel);
+  const title = panel?.querySelector<HTMLElement>(".inspect-title");
+  applyPanel(p.sel, !!uiState[p.key]);
+  title?.addEventListener("click", () => {
+    uiState[p.key] = !(uiState[p.key] ?? false);
+    applyPanel(p.sel, !!uiState[p.key]);
+    saveUi();
+  });
+}
+function toggleAllPanels() {
+  // If any panel is open, collapse all; otherwise expand all.
+  const anyOpen = PANELS.some((p) => !uiState[p.key]);
+  for (const p of PANELS) {
+    uiState[p.key] = anyOpen;
+    applyPanel(p.sel, anyOpen);
+  }
+  saveUi();
+}
 
 document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   flash(game.opsReason);
@@ -709,6 +755,7 @@ window.addEventListener("keydown", (e) => {
     cam.x = p.x;
     cam.y = p.y;
   }
+  if (e.key === "c") toggleAllPanels();
   clampCamera(cam, game.config.cols, game.config.rows);
 });
 

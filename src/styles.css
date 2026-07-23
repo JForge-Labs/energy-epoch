@@ -128,6 +128,35 @@ body {
   text-transform: uppercase;
   color: var(--amber);
   margin-bottom: 0.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Collapsible panels — click the title to shrink to just the bar, freeing map. */
+.inspect-title::after {
+  content: "▾";
+  font-size: 0.7rem;
+  opacity: 0.55;
+}
+
+.panel-collapsed .inspect-title::after {
+  content: "▸";
+}
+
+.panel-collapsed .inspect-title {
+  margin-bottom: 0;
+}
+
+.panel-collapsed > *:not(.inspect-title) {
+  display: none;
+}
+
+.panel-collapsed {
+  width: auto !important;
+  min-width: 6.5rem;
 }
 
 .inspect-legend {
