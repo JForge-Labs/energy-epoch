@@ -15,6 +15,7 @@ import {
   BATTERY_CLEAN_CAP_BBL,
   BATTERY_CRUDE_CAP_BBL,
   BATTERY_TREAT_BBL_PER_DAY,
+  BRIDGE_COST,
   DEFAULT_CONFIG,
   DRILL_COST,
   DRILL_DAYS,
@@ -24,19 +25,31 @@ import {
   FACILITY_APR,
   FACILITY_LIMIT,
   GAS_LINE_COST,
+  GAS_PIPE_COST,
+  GAS_PLANT_COST,
+  GAS_PLANT_PREMIUM,
   hitChance,
   hitChancePercent,
   MIN_REP_FOR_SPECIAL_PERMIT,
+  OIL_PIPE_COST,
+  OIL_PIPE_FLOW_BPD,
   PERMIT_COST,
   prospectGrade,
   prospectLabel,
   ROAD_COST,
+  SELL_REFUND_RATE,
   rollWellRates,
   STARTER_REFINERY_SLOT_BPD,
   TRUCK_CAP_BBL,
   UPGRADE_RIG_COST,
   WELLHEAD_CAP_BBL,
 } from "./data/economy";
+import {
+  blocksBuild,
+  isBridgeTerrain,
+  isOpen,
+  terrainLabel,
+} from "./systems/terrain";
 import {
   generateWorld,
   refineryAnchor,
@@ -54,6 +67,7 @@ import {
   tryPayDebt,
 } from "./systems/finance";
 import { Ledger } from "./systems/ledger";
+import type { LedgerEntry } from "./systems/ledger";
 import {
   tickMarket,
   tickWeather,
@@ -63,6 +77,46 @@ import {
 
 let nextId = 1;
 const uid = (p: string) => `${p}${nextId++}`;
+
+const DIRS4 = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
+
+/** Flat, JSON-safe snapshot of a game for save/restore. */
+export interface GameSnapshot {
+  tiles: Tile[][];
+  wells: Well[];
+  buildings: Building[];
+  units: Unit[];
+  player: PlayerState;
+  market: MarketState;
+  weather: WeatherState;
+  spills: SpillEvent[];
+  tool: BuildTool;
+  selectedUnitId: string | null;
+  message: string;
+  totalOilSold: number;
+  totalGasSold: number;
+  totalSpilled: number;
+  guide: string;
+  gameOver: boolean;
+  gameOverReason: string;
+  opsReason: string;
+  ledger: LedgerEntry[];
+  idCounter: number;
+  priv: {
+    acc: number;
+    lightningAcc: number;
+    fineAccT: number;
+    throughputDay: number;
+    strandedDays: [string, number][];
+    repStage: number;
+    interestBucket: number;
+  };
+}
 
 export class Game {
   readonly config: GameConfig;
@@ -95,6 +149,11 @@ export class Game {
   private strandedDays = new Map<string, number>();
   private repStage = 72; // last warned threshold band
   private interestBucket = 0;
+  /** Oil pipe links battery ↔ refinery (recomputed each tick). */
+  oilConnected = false;
+  /** Gas-pipe tiles reachable from a gas plant (keys "x,y"). */
+  private gasConnectedTiles = new Set<string>();
+  private pipeOilBucket = 0;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -153,6 +212,8 @@ export class Game {
       wellId: null,
       online: true,
       hp: 100,
+      w: 2,
+      h: 1,
     });
 
     this.buildings.push({
@@ -171,6 +232,8 @@ export class Game {
       hp: 100,
       throughputCap: STARTER_REFINERY_SLOT_BPD,
       throughputUsed: 0,
+      w: 2,
+      h: 2,
     });
 
     this.units.push({
@@ -215,7 +278,12 @@ export class Game {
       select: "Inspect wells, battery, trucks, roads.",
       move_rig: "Send drill rig (rigs can cross open ground).",
       drill: "Wildcat under the rig — simple random IP.",
-      road: "Lay lease road ($1.2k/tile). Trucks need roads.",
+      road: "Lay lease road ($1.2k/tile). Trucks need roads. Bridges cross creeks.",
+      oil_pipe: "Oil pipe: drag battery → refinery for hands-free clean-oil sales.",
+      gas_pipe: "Gas pipe: drag wells → gas plant to sell gas at a premium.",
+      gas_plant: "Place a 2×2 gas plant — premium buyer for piped gas.",
+      sell: "Scrap a road, pipe, gas line, plant, or extra truck — recover 75%.",
+      choke: "Click a well to shut it in / bring it back — throttle inflow.",
       truck: "Buy another truck.",
       gas_line: "Gas takeaway near a well — stop flare, sell gas.",
       explore: "Survey a 3×3 (9 tiles). Colors show strike odds — drill Good/Sweet.",
@@ -230,14 +298,26 @@ export class Game {
   private assetValue(): number {
     const ref = this.buildings.find((b) => b.kind === "refinery");
     let roads = 0;
-    for (const row of this.tiles) for (const t of row) if (t.hasRoad) roads++;
-    return estimateAssetValue({
-      wellsProducing: this.wells.filter((w) => w.status === "producing").length,
-      batteries: this.buildings.filter((b) => b.kind === "battery").length,
-      trucks: this.units.filter((u) => u.kind === "truck").length,
-      roadTiles: roads,
-      refinerySlotBpd: ref?.throughputCap ?? 0,
-    });
+    let pipes = 0;
+    for (const row of this.tiles) {
+      for (const t of row) {
+        if (t.hasRoad) roads++;
+        if (t.oilPipe) pipes++;
+        if (t.gasPipe) pipes++;
+      }
+    }
+    const plants = this.buildings.filter((b) => b.kind === "gas_plant").length;
+    return (
+      estimateAssetValue({
+        wellsProducing: this.wells.filter((w) => w.status === "producing").length,
+        batteries: this.buildings.filter((b) => b.kind === "battery").length,
+        trucks: this.units.filter((u) => u.kind === "truck").length,
+        roadTiles: roads,
+        refinerySlotBpd: ref?.throughputCap ?? 0,
+      }) +
+      plants * 250_000 +
+      pipes * 4_000
+    );
   }
 
   private truckPassable = (x: number, y: number): boolean => {
@@ -268,9 +348,16 @@ export class Game {
     return this.units.find((x) => x.kind === "drill_rig");
   }
 
+  /** Does building b's footprint cover tile (x,y)? */
+  occupies(b: Building, x: number, y: number): boolean {
+    const w = b.w ?? 1;
+    const h = b.h ?? 1;
+    return x >= b.x && x < b.x + w && y >= b.y && y < b.y + h;
+  }
+
   buildingAt(x: number, y: number): Building | undefined {
     return this.buildings.find(
-      (b) => b.x === x && b.y === y && b.kind !== "gas_flare",
+      (b) => b.kind !== "gas_flare" && this.occupies(b, x, y),
     );
   }
 
@@ -465,13 +552,24 @@ export class Game {
       this.message = "Road already down.";
       return false;
     }
-    if (this.player.cash < ROAD_COST) {
-      this.message = `Road costs $${ROAD_COST.toLocaleString()}.`;
+    if (blocksBuild(tile.terrain)) {
+      this.message = `Can't build road over ${terrainLabel(tile.terrain)}.`;
       return false;
     }
-    this.player.cash -= ROAD_COST;
-    this.player.opexToday += ROAD_COST;
-    this.ledger.push(this.market.day, "capex", `Road ${x},${y}`, -ROAD_COST);
+    const bridge = isBridgeTerrain(tile.terrain);
+    const cost = bridge ? BRIDGE_COST : ROAD_COST;
+    if (this.player.cash < cost) {
+      this.message = `${bridge ? "Bridge" : "Road"} costs $${cost.toLocaleString()}.`;
+      return false;
+    }
+    this.player.cash -= cost;
+    this.player.opexToday += cost;
+    this.ledger.push(
+      this.market.day,
+      "capex",
+      bridge ? `Bridge ${x},${y}` : `Road ${x},${y}`,
+      -cost,
+    );
     tile.hasRoad = true;
     tile.surface = "road";
 
@@ -488,7 +586,202 @@ export class Game {
         this.linkToRoadNetwork(t.x, t.y);
       }
     }
-    this.message = `Road laid at ${x},${y}.`;
+    this.message = bridge ? `Bridge built at ${x},${y}.` : `Road laid at ${x},${y}.`;
+    return true;
+  }
+
+  /** Lay an oil or gas pipeline tile (auto-flow transport). */
+  layPipe(x: number, y: number, kind: "oil" | "gas"): boolean {
+    const tile = this.tiles[y][x];
+    const flag = kind === "oil" ? "oilPipe" : "gasPipe";
+    if (tile[flag]) {
+      this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe already here.`;
+      return false;
+    }
+    if (blocksBuild(tile.terrain)) {
+      this.message = `Can't run pipe over ${terrainLabel(tile.terrain)}.`;
+      return false;
+    }
+    if (this.buildingAt(x, y)) {
+      this.message = "Can't run pipe through a structure — route beside it.";
+      return false;
+    }
+    const bridge = isBridgeTerrain(tile.terrain);
+    const base = kind === "oil" ? OIL_PIPE_COST : GAS_PIPE_COST;
+    const cost = bridge ? base + BRIDGE_COST : base;
+    if (this.player.cash < cost) {
+      this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe costs $${cost.toLocaleString()} here.`;
+      return false;
+    }
+    this.player.cash -= cost;
+    this.player.opexToday += cost;
+    this.ledger.push(
+      this.market.day,
+      "capex",
+      `${kind === "oil" ? "Oil" : "Gas"} pipe ${x},${y}`,
+      -cost,
+    );
+    tile[flag] = true;
+    this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe laid at ${x},${y}.`;
+    return true;
+  }
+
+  /** Place a 2×2 gas plant (premium piped-gas buyer). */
+  placeGasPlant(x: number, y: number): boolean {
+    if (this.player.cash < GAS_PLANT_COST) {
+      this.message = `Gas plant costs $${GAS_PLANT_COST.toLocaleString()}.`;
+      return false;
+    }
+    for (let dy = 0; dy < 2; dy++) {
+      for (let dx = 0; dx < 2; dx++) {
+        const tx = x + dx;
+        const ty = y + dy;
+        if (tx >= this.config.cols || ty >= this.config.rows) {
+          this.message = "Gas plant needs a 2×2 clear area in bounds.";
+          return false;
+        }
+        if (blocksBuild(this.tiles[ty][tx].terrain)) {
+          this.message = `Can't site the plant on ${terrainLabel(this.tiles[ty][tx].terrain)}.`;
+          return false;
+        }
+        if (this.buildingAt(tx, ty)) {
+          this.message = "Something's already on that 2×2 footprint.";
+          return false;
+        }
+      }
+    }
+    this.player.cash -= GAS_PLANT_COST;
+    this.player.opexToday += GAS_PLANT_COST;
+    this.ledger.push(this.market.day, "capex", `Gas plant ${x},${y}`, -GAS_PLANT_COST);
+    this.buildings.push({
+      id: uid("gp"),
+      kind: "gas_plant",
+      x,
+      y,
+      oil: 0,
+      oilCap: 0,
+      crude: 0,
+      crudeCap: 0,
+      clean: 0,
+      cleanCap: 0,
+      wellId: null,
+      online: true,
+      hp: 100,
+      w: 2,
+      h: 2,
+    });
+    this.message = `Gas plant online at ${x},${y}. Run gas pipe from wells to sell at a premium.`;
+    return true;
+  }
+
+  /**
+   * Scrap a player-placed asset at a tile and recover SELL_REFUND_RATE of cost.
+   * Handles extra trucks, gas lines, and roads. Core financed infra (battery,
+   * refinery) and auto-built wellhead gear are protected.
+   */
+  sellAt(x: number, y: number): boolean {
+    const refundOf = (cost: number) => Math.round(cost * SELL_REFUND_RATE);
+
+    // Extra truck sitting on this tile — keep at least one on the lease.
+    const truck = this.units.find(
+      (u) => u.kind === "truck" && Math.round(u.x) === x && Math.round(u.y) === y,
+    );
+    if (truck) {
+      const truckCount = this.units.filter((u) => u.kind === "truck").length;
+      if (truckCount <= 1) {
+        this.message = "Keep at least one truck to haul.";
+        return false;
+      }
+      const refund = refundOf(EXTRA_TRUCK_COST);
+      this.units = this.units.filter((u) => u.id !== truck.id);
+      this.player.cash += refund;
+      this.ledger.push(this.market.day, "other", "Truck salvage", refund);
+      this.message = `Sold truck for $${refund.toLocaleString()} (75%).`;
+      return true;
+    }
+
+    const b = this.buildingAt(x, y);
+    if (b) {
+      if (b.kind === "gas_line") {
+        const refund = refundOf(GAS_LINE_COST);
+        this.buildings = this.buildings.filter((o) => o.id !== b.id);
+        this.player.cash += refund;
+        this.ledger.push(this.market.day, "other", "Gas line salvage", refund);
+        // Flare comes back on for the well this line served.
+        for (const f of this.buildings) {
+          if (
+            f.kind === "gas_flare" &&
+            (f.wellId === b.wellId ||
+              Math.abs(f.x - x) + Math.abs(f.y - y) <= 2)
+          ) {
+            f.online = true;
+          }
+        }
+        this.message = `Scrapped gas line, +$${refund.toLocaleString()}. Flare back on.`;
+        return true;
+      }
+      if (b.kind === "gas_plant") {
+        const refund = refundOf(GAS_PLANT_COST);
+        this.buildings = this.buildings.filter((o) => o.id !== b.id);
+        this.player.cash += refund;
+        this.ledger.push(this.market.day, "other", "Gas plant salvage", refund);
+        this.message = `Scrapped gas plant, +$${refund.toLocaleString()}.`;
+        return true;
+      }
+      if (b.kind === "battery" || b.kind === "refinery") {
+        this.message = "Won't scrap the battery or refinery.";
+        return false;
+      }
+      if (b.kind === "pumpjack" || b.kind === "wellhead_tank") {
+        this.message = "Can't scrap wellhead gear here.";
+        return false;
+      }
+    }
+
+    const tile = this.tiles[y][x];
+    if (tile.oilPipe) {
+      const refund = refundOf(OIL_PIPE_COST);
+      tile.oilPipe = false;
+      this.player.cash += refund;
+      this.ledger.push(this.market.day, "other", `Oil pipe salvage ${x},${y}`, refund);
+      this.message = `Pulled oil pipe at ${x},${y}, +$${refund.toLocaleString()}.`;
+      return true;
+    }
+    if (tile.gasPipe) {
+      const refund = refundOf(GAS_PIPE_COST);
+      tile.gasPipe = false;
+      this.player.cash += refund;
+      this.ledger.push(this.market.day, "other", `Gas pipe salvage ${x},${y}`, refund);
+      this.message = `Pulled gas pipe at ${x},${y}, +$${refund.toLocaleString()}.`;
+      return true;
+    }
+    if (tile.hasRoad && !tile.isPad) {
+      const refund = refundOf(ROAD_COST);
+      tile.hasRoad = false;
+      tile.surface = "ground";
+      this.player.cash += refund;
+      this.ledger.push(this.market.day, "other", `Road salvage ${x},${y}`, refund);
+      this.message = `Pulled road at ${x},${y}, +$${refund.toLocaleString()}.`;
+      return true;
+    }
+
+    this.message = "Nothing sellable here — roads, pipe, gas line, plant, or extra trucks.";
+    return false;
+  }
+
+  /** Shut a producing well in (stop inflow) or bring it back online. */
+  toggleChoke(x: number, y: number): boolean {
+    const well = this.wells.find(
+      (w) => w.x === x && w.y === y && w.status === "producing",
+    );
+    if (!well) {
+      this.message = "Choke needs a producing well.";
+      return false;
+    }
+    well.choked = !well.choked;
+    this.message = well.choked
+      ? `Well ${x},${y} shut in — inflow stopped. Click again to resume.`
+      : `Well ${x},${y} back online — flowing ${well.oilRate.toFixed(0)} bopd.`;
     return true;
   }
 
@@ -525,6 +818,10 @@ export class Game {
     const tile = this.tiles[y][x];
     if (tile.drilled) {
       this.message = "Already drilled here.";
+      return false;
+    }
+    if (!isOpen(tile.terrain)) {
+      this.message = `Can't drill on ${terrainLabel(tile.terrain)} — move the rig to open ground.`;
       return false;
     }
     const zone = tile.subsurface.zone;
@@ -747,51 +1044,93 @@ export class Game {
     return true;
   }
 
-  placeGasLine(x: number, y: number): boolean {
+  placeGasLine(clickX: number, clickY: number): boolean {
     if (this.player.cash < GAS_LINE_COST) {
       this.message = `Gas line costs $${GAS_LINE_COST.toLocaleString()}.`;
       return false;
     }
-    if (this.buildingAt(x, y)) {
-      this.message = "Occupied.";
+
+    // Tie into the producing well nearest the click. The player doesn't have to
+    // land on a specific empty tile — we snap the takeaway to the best open
+    // spot beside that well (the wellhead itself is full of jack/tank/flare).
+    let well: Well | null = null;
+    let bestWellDist = Infinity;
+    for (const w of this.wells) {
+      if (w.status !== "producing") continue;
+      const d = Math.abs(w.x - clickX) + Math.abs(w.y - clickY);
+      if (d < bestWellDist) {
+        bestWellDist = d;
+        well = w;
+      }
+    }
+    if (!well) {
+      this.message = "No producing well to tie into yet — hit a well first.";
       return false;
     }
-    const nearWell = this.wells.some(
-      (w) =>
-        w.status === "producing" &&
-        Math.abs(w.x - x) + Math.abs(w.y - y) <= 2,
-    );
-    if (!nearWell) {
-      this.message = "Within 2 of a producing well.";
+    if (bestWellDist > 4) {
+      this.message = "Click closer to a producing well to run its gas line.";
       return false;
     }
+
+    // Pick the open tile within 2 of the well that's nearest the click. A
+    // truck passing through doesn't count — only real structures block.
+    let target: { x: number; y: number } | null = null;
+    let bestScore = Infinity;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > 2) continue;
+        const tx = well.x + dx;
+        const ty = well.y + dy;
+        if (tx < 0 || ty < 0 || tx >= this.config.cols || ty >= this.config.rows) {
+          continue;
+        }
+        if (this.buildingAt(tx, ty)) continue;
+        const score = Math.abs(tx - clickX) + Math.abs(ty - clickY);
+        if (score < bestScore) {
+          bestScore = score;
+          target = { x: tx, y: ty };
+        }
+      }
+    }
+    if (!target) {
+      this.message = `No open tile next to the well at ${well.x},${well.y} — clear space nearby.`;
+      return false;
+    }
+
     this.player.cash -= GAS_LINE_COST;
     this.player.opexToday += GAS_LINE_COST;
-    this.ledger.push(this.market.day, "capex", `Gas line ${x},${y}`, -GAS_LINE_COST);
+    this.ledger.push(
+      this.market.day,
+      "capex",
+      `Gas line ${target.x},${target.y}`,
+      -GAS_LINE_COST,
+    );
     this.buildings.push({
       id: uid("gl"),
       kind: "gas_line",
-      x,
-      y,
+      x: target.x,
+      y: target.y,
       oil: 0,
       oilCap: 0,
       crude: 0,
       crudeCap: 0,
       clean: 0,
       cleanCap: 0,
-      wellId: null,
+      wellId: well.id,
       online: true,
       hp: 100,
     });
+    // Cap the flare on this well and any others within reach of the takeaway.
     for (const b of this.buildings) {
+      if (b.kind !== "gas_flare") continue;
       if (
-        b.kind === "gas_flare" &&
-        Math.abs(b.x - x) + Math.abs(b.y - y) <= 2
+        b.wellId === well.id ||
+        Math.abs(b.x - target.x) + Math.abs(b.y - target.y) <= 2
       ) {
         b.online = false;
       }
     }
-    this.message = "Gas takeaway online.";
+    this.message = `Gas takeaway online at ${target.x},${target.y} — flare off, gas selling.`;
     return true;
   }
 
@@ -887,6 +1226,26 @@ export class Game {
       this.layRoad(x, y);
       return;
     }
+    if (this.tool === "oil_pipe") {
+      this.layPipe(x, y, "oil");
+      return;
+    }
+    if (this.tool === "gas_pipe") {
+      this.layPipe(x, y, "gas");
+      return;
+    }
+    if (this.tool === "gas_plant") {
+      this.placeGasPlant(x, y);
+      return;
+    }
+    if (this.tool === "sell") {
+      this.sellAt(x, y);
+      return;
+    }
+    if (this.tool === "choke") {
+      this.toggleChoke(x, y);
+      return;
+    }
     if (this.tool === "explore") {
       this.buyExploration(x, y);
       return;
@@ -954,6 +1313,9 @@ export class Game {
       }
       if (well.status === "duster") return "Dry hole (duster). No production.";
       if (well.status === "shut_in") return "Well shut-in — declined out.";
+      if (well.choked) {
+        return `Well CHOKED (shut in) · ${well.oilRate.toFixed(1)} bopd held back · Choke tool to resume`;
+      }
       const tank = well.wellheadTankId
         ? this.buildings.find((b) => b.id === well.wellheadTankId)
         : undefined;
@@ -982,14 +1344,20 @@ export class Game {
         }
         return "Pumpjack";
       }
-      if (b.kind === "gas_line") return "Gas takeaway — sales on, flare off nearby";
+      if (b.kind === "gas_line") return "Gas takeaway — sells raw gas, flare off nearby";
+      if (b.kind === "gas_plant") {
+        return "Gas plant · premium buyer — run gas pipe from wells to sell here";
+      }
       return b.kind;
     }
 
     const tile = this.tiles[y][x];
     const bits: string[] = [];
     if (tile.isPad) bits.push("company pad");
-    if (tile.hasRoad) bits.push("road");
+    if (tile.hasRoad) bits.push(isBridgeTerrain(tile.terrain) ? "bridge" : "road");
+    if (tile.oilPipe) bits.push("oil pipe");
+    if (tile.gasPipe) bits.push("gas pipe");
+    if (!isOpen(tile.terrain) && !tile.hasRoad) bits.push(terrainLabel(tile.terrain));
     if (tile.surveyed) {
       const g = prospectGrade(tile.subsurface.prospect);
       const pct = hitChancePercent(tile.subsurface.prospect, true);
@@ -1076,6 +1444,9 @@ export class Game {
 
     const at = (u: Unit, x: number, y: number) =>
       Math.round(u.x) === x && Math.round(u.y) === y;
+    // Multi-tile buildings: a truck "arrives" on any footprint tile.
+    const atBldg = (u: Unit, b: Building) =>
+      this.occupies(b, Math.round(u.x), Math.round(u.y));
 
     const assignPath = (truck: Unit, x: number, y: number): boolean => {
       if (at(truck, x, y)) return true;
@@ -1103,7 +1474,7 @@ export class Game {
       // --- Arrive / act at destination ---
 
       // Sell clean oil at refinery
-      if (truck.cargoKind === "clean" && truck.cargo > 0 && at(truck, refinery.x, refinery.y)) {
+      if (truck.cargoKind === "clean" && truck.cargo > 0 && atBldg(truck, refinery)) {
         const room = Math.max(
           0,
           (refinery.throughputCap ?? 9999) - (refinery.throughputUsed ?? 0),
@@ -1138,7 +1509,7 @@ export class Game {
       }
 
       // Unload crude at battery
-      if (truck.cargoKind === "crude" && truck.cargo > 0 && at(truck, battery.x, battery.y)) {
+      if (truck.cargoKind === "crude" && truck.cargo > 0 && atBldg(truck, battery)) {
         const room = Math.max(0, battery.crudeCap - battery.crude);
         const into = Math.min(truck.cargo, room);
         battery.crude += into;
@@ -1158,7 +1529,7 @@ export class Game {
       // Load clean at battery for refinery run
       if (
         truck.cargo < 1 &&
-        at(truck, battery.x, battery.y) &&
+        atBldg(truck, battery) &&
         battery.clean >= 5
       ) {
         // Prefer clearing wellheads if they're near full; else haul clean
@@ -1249,7 +1620,7 @@ export class Game {
         truck.targetBuildingId = battery.id;
         if (!assignPath(truck, battery.x, battery.y)) {
           this.message = "No road to battery for clean pickup.";
-        } else if (!at(truck, battery.x, battery.y)) {
+        } else if (!atBldg(truck, battery)) {
           this.message = "Truck to battery for clean oil.";
         }
         continue;
@@ -1262,7 +1633,7 @@ export class Game {
         continue;
       }
 
-      if (!at(truck, battery.x, battery.y)) {
+      if (!atBldg(truck, battery)) {
         assignPath(truck, battery.x, battery.y);
       }
       truck.job = "idle";
@@ -1278,6 +1649,136 @@ export class Game {
       const turn = Math.min(b.crude, room, BATTERY_TREAT_BBL_PER_DAY * dtDays);
       b.crude -= turn;
       b.clean += turn;
+    }
+  }
+
+  /** Tile (x,y) is on or cardinally adjacent to building b's footprint. */
+  private touchesFootprint(x: number, y: number, b: Building): boolean {
+    if (this.occupies(b, x, y)) return true;
+    return (
+      this.occupies(b, x + 1, y) ||
+      this.occupies(b, x - 1, y) ||
+      this.occupies(b, x, y + 1) ||
+      this.occupies(b, x, y - 1)
+    );
+  }
+
+  /**
+   * Flood the pipe networks once per tick:
+   *  - oil: is there an oilPipe path from the battery to the refinery?
+   *  - gas: which gasPipe tiles are reachable from a gas plant?
+   */
+  private recomputePipes() {
+    const key = (x: number, y: number) => `${x},${y}`;
+    const cols = this.config.cols;
+    const rows = this.config.rows;
+
+    this.oilConnected = false;
+    const battery = this.buildings.find((b) => b.kind === "battery");
+    const refinery = this.buildings.find((b) => b.kind === "refinery");
+    if (battery && refinery) {
+      const seen = new Set<string>();
+      const q: { x: number; y: number }[] = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (this.tiles[y][x].oilPipe && this.touchesFootprint(x, y, battery)) {
+            const k = key(x, y);
+            if (!seen.has(k)) {
+              seen.add(k);
+              q.push({ x, y });
+            }
+          }
+        }
+      }
+      while (q.length) {
+        const c = q.shift()!;
+        if (this.touchesFootprint(c.x, c.y, refinery)) {
+          this.oilConnected = true;
+          break;
+        }
+        for (const [dx, dy] of DIRS4) {
+          const nx = c.x + dx;
+          const ny = c.y + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          const k = key(nx, ny);
+          if (seen.has(k) || !this.tiles[ny][nx].oilPipe) continue;
+          seen.add(k);
+          q.push({ x: nx, y: ny });
+        }
+      }
+    }
+
+    this.gasConnectedTiles.clear();
+    const plants = this.buildings.filter((b) => b.kind === "gas_plant");
+    if (plants.length) {
+      const q: { x: number; y: number }[] = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (
+            this.tiles[y][x].gasPipe &&
+            plants.some((p) => this.touchesFootprint(x, y, p))
+          ) {
+            const k = key(x, y);
+            if (!this.gasConnectedTiles.has(k)) {
+              this.gasConnectedTiles.add(k);
+              q.push({ x, y });
+            }
+          }
+        }
+      }
+      while (q.length) {
+        const c = q.shift()!;
+        for (const [dx, dy] of DIRS4) {
+          const nx = c.x + dx;
+          const ny = c.y + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          const k = key(nx, ny);
+          if (this.gasConnectedTiles.has(k) || !this.tiles[ny][nx].gasPipe) continue;
+          this.gasConnectedTiles.add(k);
+          q.push({ x: nx, y: ny });
+        }
+      }
+    }
+  }
+
+  /** A well sells to a gas plant if a plant-connected gas-pipe tile touches it. */
+  gasSinkForWell(well: Well): boolean {
+    if (!this.gasConnectedTiles.size) return false;
+    const key = (x: number, y: number) => `${x},${y}`;
+    if (this.gasConnectedTiles.has(key(well.x, well.y))) return true;
+    for (const [dx, dy] of DIRS4) {
+      if (this.gasConnectedTiles.has(key(well.x + dx, well.y + dy))) return true;
+    }
+    return false;
+  }
+
+  /** Auto-flow clean oil battery → refinery over pipe (slot-capped, no trucks). */
+  private flowOilPipe(dtDays: number) {
+    if (!this.oilConnected) return;
+    const battery = this.buildings.find((b) => b.kind === "battery");
+    const refinery = this.buildings.find((b) => b.kind === "refinery");
+    if (!battery || !refinery) return;
+    const room = Math.max(
+      0,
+      (refinery.throughputCap ?? 0) - (refinery.throughputUsed ?? 0),
+    );
+    const flow = Math.min(battery.clean, room, OIL_PIPE_FLOW_BPD * dtDays);
+    if (flow <= 0.01) return;
+    const revenue = flow * this.market.oilPrice;
+    battery.clean -= flow;
+    refinery.throughputUsed = (refinery.throughputUsed ?? 0) + flow;
+    this.player.cash += revenue;
+    this.player.revenueToday += revenue;
+    this.totalOilSold += flow;
+    this.pipeOilBucket += revenue;
+    if (this.pipeOilBucket >= 1500) {
+      this.ledger.push(
+        this.market.day,
+        "revenue",
+        "Pipeline oil sales",
+        this.pipeOilBucket,
+      );
+      this.pipeOilBucket = 0;
     }
   }
 
@@ -1323,12 +1824,65 @@ export class Game {
     }
   }
 
+  /**
+   * Detect the binding throughput bottleneck and give a specific remedy.
+   * The ops chain is serial: trucks → battery treating (480/day) → refinery
+   * slot (1200/day). Whichever is smallest vs production backs the chain up.
+   * Returns "" when the operation is healthy.
+   */
+  bottleneckAdvice(): string {
+    const batt = this.buildings.find((b) => b.kind === "battery");
+    if (!batt) return "";
+    const producing = this.wells.filter(
+      (w) => w.status === "producing" && !w.choked,
+    );
+    if (!producing.length) return "";
+    const prodBopd = producing.reduce((s, w) => s + w.oilRate, 0);
+    const trucks = this.units.filter((u) => u.kind === "truck").length;
+    const ref = this.buildings.find((b) => b.kind === "refinery");
+    const slotCap = ref?.throughputCap ?? 0;
+    const crudePct = batt.crudeCap ? Math.floor((batt.crude / batt.crudeCap) * 100) : 0;
+    const cleanPct = batt.cleanCap ? Math.floor((batt.clean / batt.cleanCap) * 100) : 0;
+    const wellheadsHot = this.buildings.filter(
+      (b) =>
+        b.kind === "wellhead_tank" &&
+        b.online &&
+        b.oilCap > 0 &&
+        b.oil / b.oilCap >= 0.85,
+    ).length;
+
+    // Clean backing up stalls treating and locks the whole chain.
+    if (cleanPct >= 85) {
+      const slotMaxed = (ref?.throughputUsed ?? 0) >= slotCap - 1;
+      return slotMaxed
+        ? `Clean tank ${cleanPct}% & refinery slot maxed (${slotCap} bbl/day). Sales are capped — slow drilling; refinery/pipe upgrades needed to sell more.`
+        : `Clean tank ${cleanPct}% but the refinery still has room — not enough trucks moving clean to sales. Buy a truck.`;
+    }
+    // Crude backing up: treating can't keep pace with production.
+    if (crudePct >= 85) {
+      return prodBopd > BATTERY_TREAT_BBL_PER_DAY
+        ? `Crude ${crudePct}%: treating maxed at ${BATTERY_TREAT_BBL_PER_DAY} bbl/day vs ~${Math.round(prodBopd)} bopd produced. Reduce active wells or add treating capacity.`
+        : `Crude ${crudePct}% — clean isn't clearing to the refinery fast enough. Buy a truck.`;
+    }
+    // Wellheads overflowing: haul-limited (100 bbl tanks fill fast).
+    if (wellheadsHot > 0 && trucks < producing.length) {
+      return `${wellheadsHot} wellhead tank(s) near full — ${producing.length} wells vs ${trucks} truck(s). Buy a truck to keep crude moving.`;
+    }
+    // Early warning before anything spills.
+    if (prodBopd > BATTERY_TREAT_BBL_PER_DAY * 0.9) {
+      return `Near capacity: ~${Math.round(prodBopd)} bopd produced vs ${BATTERY_TREAT_BBL_PER_DAY}/day treating ceiling. Watch the battery — add trucks/capacity before drilling more.`;
+    }
+    return "";
+  }
+
   /** Snapshot for facility dashboard */
   dashboard() {
     const wells = this.wells.filter((w) => w.status === "producing");
-    const oilBopd = wells.reduce((s, w) => s + w.oilRate, 0);
-    const gasMcfd = wells.reduce((s, w) => s + w.gasRate, 0);
+    const flowing = wells.filter((w) => !w.choked);
+    const oilBopd = flowing.reduce((s, w) => s + w.oilRate, 0);
+    const gasMcfd = flowing.reduce((s, w) => s + w.gasRate, 0);
     const batt = this.buildings.find((b) => b.kind === "battery");
+    const ref = this.buildings.find((b) => b.kind === "refinery");
     const trucks = this.units.filter((u) => u.kind === "truck");
     const stranded = [...this.strandedDays.entries()].filter(([, d]) => d >= 0.5);
     const interestDay =
@@ -1358,6 +1912,12 @@ export class Game {
       gameOverReason: this.gameOverReason,
       ledger: this.ledger.recent(10),
       guide: this.guide,
+      advice: this.bottleneckAdvice(),
+      treatCap: BATTERY_TREAT_BBL_PER_DAY,
+      refSlotCap: ref?.throughputCap ?? 0,
+      refSlotUsed: ref?.throughputUsed ?? 0,
+      oilPiped: this.oilConnected,
+      gasPlants: this.buildings.filter((b) => b.kind === "gas_plant").length,
     };
   }
 
@@ -1366,6 +1926,73 @@ export class Game {
       row.map((t, x) => (t.isPad ? { x, y } : null)),
     ).find(Boolean);
     return pad ?? { x: this.config.cols / 2, y: this.config.rows / 2 };
+  }
+
+  /** Capture all mutable state for localStorage persistence. */
+  serialize(): GameSnapshot {
+    return {
+      tiles: this.tiles,
+      wells: this.wells,
+      buildings: this.buildings,
+      units: this.units,
+      player: this.player,
+      market: this.market,
+      weather: this.weather,
+      spills: this.spills,
+      tool: this.tool,
+      selectedUnitId: this.selectedUnitId,
+      message: this.message,
+      totalOilSold: this.totalOilSold,
+      totalGasSold: this.totalGasSold,
+      totalSpilled: this.totalSpilled,
+      guide: this.guide,
+      gameOver: this.gameOver,
+      gameOverReason: this.gameOverReason,
+      opsReason: this.opsReason,
+      ledger: this.ledger.entries,
+      idCounter: nextId,
+      priv: {
+        acc: this.acc,
+        lightningAcc: this.lightningAcc,
+        fineAccT: this.fineAcc.t,
+        throughputDay: this.throughputDay,
+        strandedDays: [...this.strandedDays.entries()],
+        repStage: this.repStage,
+        interestBucket: this.interestBucket,
+      },
+    };
+  }
+
+  /** Restore state produced by serialize() into this instance. */
+  applyState(s: GameSnapshot) {
+    this.tiles = s.tiles;
+    this.wells = s.wells;
+    this.buildings = s.buildings;
+    this.units = s.units;
+    this.player = s.player;
+    this.market = s.market;
+    this.weather = s.weather;
+    this.spills = s.spills ?? [];
+    this.tool = s.tool;
+    this.selectedUnitId = s.selectedUnitId;
+    this.message = s.message;
+    this.totalOilSold = s.totalOilSold;
+    this.totalGasSold = s.totalGasSold;
+    this.totalSpilled = s.totalSpilled;
+    this.guide = s.guide;
+    this.gameOver = s.gameOver;
+    this.gameOverReason = s.gameOverReason;
+    this.opsReason = s.opsReason;
+    this.ledger.entries = s.ledger ?? [];
+    this.acc = s.priv.acc;
+    this.lightningAcc = s.priv.lightningAcc;
+    this.fineAcc = { t: s.priv.fineAccT };
+    this.throughputDay = s.priv.throughputDay;
+    this.strandedDays = new Map(s.priv.strandedDays ?? []);
+    this.repStage = s.priv.repStage;
+    this.interestBucket = s.priv.interestBucket;
+    // Keep the module id counter ahead of any restored ids.
+    nextId = Math.max(nextId, s.idCounter ?? 1);
   }
 
   private tickRepConsequences() {
@@ -1461,6 +2088,8 @@ export class Game {
         this.updateDrilling(dtDays);
       }
 
+      this.recomputePipes();
+
       const wxFactor =
         this.weather.kind === "storm" ? 1 - this.weather.intensity * 0.35 : 1;
       const prod = simulateProduction(
@@ -1469,6 +2098,8 @@ export class Game {
         this.player,
         this.market.gasPrice,
         dtDays * wxFactor,
+        (well) => this.gasSinkForWell(well),
+        GAS_PLANT_PREMIUM,
       );
       this.totalGasSold += prod.gasSold;
       this.totalSpilled += prod.spilled;
@@ -1478,6 +2109,7 @@ export class Game {
       if (prod.messages[0]) this.message = prod.messages[0];
 
       this.treatBattery(dtDays);
+      this.flowOilPipe(dtDays);
       this.updateTrucks();
       this.tickLightning(dtHours);
 

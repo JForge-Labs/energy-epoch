@@ -50,6 +50,23 @@ Wellhead (crude) --truck/roads--> Battery (treat crude→clean) --truck/roads-->
 - **Wildcat** (unsurveyed) stays risky.
 - Zone tier still gates rig tech; special areas still need permits.
 
+## Terrain & obstacles (v2)
+
+- Map is a larger 40×24 lease with procedural obstacles: **rock ridges** and **water** (hard — nothing builds or crosses) and **creeks** (crossable by a **bridge** — road/pipe at a premium; rigs need the bridge).
+- Drilling only on **open ground**. Generation guarantees a buildable corridor between the financed sites so a lease is always playable.
+
+## Transport tiers (v2)
+
+- **Trucks** (early): haul crude → battery, clean → refinery on roads. Cheap, labor-limited.
+- **Oil pipeline** (mid): drag a pipe **battery → refinery** for hands-free clean-oil sales. Auto-flows, no trucks — but **still capped by the refinery slot** (upgrading throughput is the next lever).
+- **Gas pipeline + gas plant**: place a 2×2 **gas plant** (premium buyer) and drag **gas pipe** from wells to it. Sells associated gas at a premium and stops the flare. The cheap **gas line** remains as a flare-stopper that sells raw gas at spot.
+- Pipelines are capex per tile (auto-flow, low ongoing cost); everything is salvageable at 75% via the **Sell** tool.
+
+## Player levers (v2)
+
+- **Choke** a well to shut it in and throttle inflow when logistics can't keep up.
+- The Facility panel surfaces a **bottleneck advisory** naming the binding constraint (trucks → treating → refinery slot) and the fix.
+
 ## Explicit later
 
-Pipelines, pumps, compression, gas plants as commodity purchasers. Richer decline models.
+Refinery/treating capacity upgrades, pumps & compression, richer decline models, animated/sprite graphics (PixiJS renderer scaffold in place, opt-in via `?pixi`), and a mobile build.

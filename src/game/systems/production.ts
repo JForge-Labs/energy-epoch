@@ -33,6 +33,8 @@ export function simulateProduction(
   player: PlayerState,
   gasPrice: number,
   dtDays: number,
+  gasPlantConnected: (well: Well) => boolean = () => false,
+  gasPlantPremium = 1,
 ): ProdResult {
   const result: ProdResult = {
     oilProduced: 0,
@@ -47,6 +49,8 @@ export function simulateProduction(
 
   for (const well of wells) {
     if (well.status !== "producing") continue;
+    // Choked wells are shut in by the player: no flow, no decline, no flare.
+    if (well.choked) continue;
 
     const declineFactor = Math.exp(-well.declinePerDay * dtDays);
     well.oilRate = Math.max(0.4, well.oilRate * declineFactor);
@@ -94,9 +98,18 @@ export function simulateProduction(
       }
     }
 
-    // Associated gas: flare hurts rep; full tank makes flaring worse/more visible
+    // Associated gas: plant (premium) > gas line (base) > flare (rep bleed).
     if (gas > 0.01) {
-      if (hasGasLine(well, buildings)) {
+      if (gasPlantConnected(well)) {
+        const revenue = gas * gasPrice * gasPlantPremium;
+        player.cash += revenue;
+        player.revenueToday += revenue;
+        player.reputation = Math.min(
+          100,
+          player.reputation + gas * GAS_SALE_REP_PER_MCF,
+        );
+        result.gasSold += gas;
+      } else if (hasGasLine(well, buildings)) {
         const revenue = gas * gasPrice;
         player.cash += revenue;
         player.revenueToday += revenue;

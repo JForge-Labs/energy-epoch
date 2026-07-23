@@ -1,4 +1,5 @@
 import type { Tile } from "../types";
+import { rigCanEnter } from "./terrain";
 
 export type PathMode = "any" | "road";
 
@@ -21,7 +22,8 @@ export function findPath(
 
   const canStep = (x: number, y: number, isGoal: boolean): boolean => {
     if (blocked.has(key(x, y)) && !isGoal) return false;
-    if (mode === "any") return true;
+    // "any" mode = rig movement: obstacles (water/rock, unbridged creek) block.
+    if (mode === "any") return isGoal || rigCanEnter(tiles[y][x]);
     if (isGoal) return true;
     if (roadPassable) return roadPassable(x, y);
     const t = tiles[y][x];

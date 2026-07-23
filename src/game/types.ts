@@ -13,8 +13,13 @@ export interface Subsurface {
   special: boolean;
 }
 
+/** Base land type. Water/rock block build+traverse; creek needs a bridge. */
+export type Terrain = "ground" | "scrub" | "water" | "creek" | "rock";
+
 export interface Tile {
   surface: "ground" | "scrub" | "road";
+  /** Base terrain — obstacles for roads, pipe, rigs, and drilling. */
+  terrain: Terrain;
   subsurface: Subsurface;
   surveyed: boolean;
   drilled: boolean;
@@ -23,6 +28,10 @@ export interface Tile {
   isPad: boolean;
   /** Player-built road */
   hasRoad: boolean;
+  /** Player-built oil pipeline (battery → refinery auto-flow) */
+  oilPipe?: boolean;
+  /** Player-built gas pipeline (well → gas plant) */
+  gasPipe?: boolean;
 }
 
 export type WellStatus = "drilling" | "producing" | "duster" | "shut_in";
@@ -42,6 +51,8 @@ export interface Well {
   drillDaysNeeded: number;
   wellheadTankId: string | null;
   pumpjackId: string | null;
+  /** Player-throttled: producing but shut in to stop inflow. */
+  choked?: boolean;
 }
 
 export type BuildingKind =
@@ -50,6 +61,7 @@ export type BuildingKind =
   | "battery"
   | "gas_flare"
   | "gas_line"
+  | "gas_plant"
   | "refinery";
 
 export interface Building {
@@ -71,6 +83,9 @@ export interface Building {
   hp: number;
   throughputCap?: number;
   throughputUsed?: number;
+  /** Footprint in tiles (anchor = top-left x,y). Defaults to 1×1. */
+  w?: number;
+  h?: number;
 }
 
 export type UnitKind = "drill_rig" | "truck";
@@ -141,6 +156,11 @@ export type BuildTool =
   | "move_rig"
   | "drill"
   | "road"
+  | "oil_pipe"
+  | "gas_pipe"
+  | "gas_plant"
+  | "sell"
+  | "choke"
   | "truck"
   | "gas_line"
   | "explore"

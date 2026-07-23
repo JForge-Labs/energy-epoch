@@ -1,4 +1,5 @@
 import type { Subsurface, Tile, ZoneTier } from "../types";
+import { blocksBuild } from "./terrain";
 
 function hash(x: number, y: number, seed: number): number {
   let n = x * 374761393 + y * 668265263 + seed * 982451653;
@@ -69,6 +70,89 @@ function makeSubsurface(
   };
 }
 
+/** Smooth blob field: max falloff over a set of gaussian centers. */
+function blobField(
+  x: number,
+  y: number,
+  centers: { cx: number; cy: number; w: number }[],
+): number {
+  let best = 0;
+  for (const c of centers) {
+    const dx = x - c.cx;
+    const dy = y - c.cy;
+    best = Math.max(best, Math.exp(-(dx * dx + dy * dy) / (c.w * c.w)));
+  }
+  return best;
+}
+
+/** Assign obstacle terrain (rock ridges, lakes, a winding creek). */
+function assignTerrain(tiles: Tile[][], cols: number, rows: number, seed: number) {
+  const rock = [
+    { cx: cols * 0.7, cy: rows * 0.22, w: 3.4 },
+    { cx: cols * 0.8, cy: rows * 0.32, w: 2.8 },
+    { cx: cols * 0.3, cy: rows * 0.85, w: 3.0 },
+  ];
+  const water = [
+    { cx: cols * 0.55, cy: rows * 0.8, w: 3.2 },
+    { cx: cols * 0.85, cy: rows * 0.68, w: 2.6 },
+  ];
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const t = tiles[y][x];
+      const jitter = (hash(x, y, seed + 41) - 0.5) * 0.18;
+      const rockF = blobField(x, y, rock) + jitter;
+      const waterF = blobField(x, y, water) + jitter;
+      if (rockF > 0.62) t.terrain = "rock";
+      else if (waterF > 0.6) t.terrain = "water";
+    }
+  }
+
+  // A creek meanders top→bottom, cutting through whatever it crosses.
+  const baseX = cols * 0.44;
+  for (let y = 0; y < rows; y++) {
+    const wander =
+      Math.sin(y * 0.55 + seed) * (cols * 0.12) +
+      (hash(y, 7, seed + 5) - 0.5) * 2.2;
+    const cx = Math.round(baseX + wander);
+    for (let dx = 0; dx <= 1; dx++) {
+      const x = cx + dx;
+      if (x < 0 || x >= cols) continue;
+      // Slight breaks so the creek reads natural, not a solid wall.
+      if (hash(x, y, seed + 13) > 0.14) tiles[y][x].terrain = "creek";
+    }
+  }
+}
+
+/** Carve a 1-tile buildable corridor, converting hard obstacles to ground. */
+function carveCorridor(
+  tiles: Tile[][],
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  let cx = from.x;
+  let cy = from.y;
+  let guard = 0;
+  while ((cx !== to.x || cy !== to.y) && guard++ < 500) {
+    const rx = to.x - cx;
+    const ry = to.y - cy;
+    if ((Math.abs(rx) >= Math.abs(ry) && rx !== 0) || ry === 0) cx += Math.sign(rx);
+    else cy += Math.sign(ry);
+    const t = tiles[cy]?.[cx];
+    if (t && blocksBuild(t.terrain)) t.terrain = "ground";
+  }
+}
+
+/** Force a small clear pad of open ground around a site. */
+function clearSite(tiles: Tile[][], cx: number, cy: number, r: number) {
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      const t = tiles[y]?.[x];
+      if (t) t.terrain = "ground";
+    }
+  }
+}
+
 export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
   const tiles: Tile[][] = [];
   for (let y = 0; y < rows; y++) {
@@ -77,6 +161,7 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
       const n = hash(x, y, seed + 99);
       row.push({
         surface: n > 0.72 ? "scrub" : "ground",
+        terrain: n > 0.72 ? "scrub" : "ground",
         subsurface: makeSubsurface(x, y, cols, rows, seed),
         surveyed: false,
         drilled: false,
@@ -87,11 +172,24 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
     }
     tiles.push(row);
   }
+
+  assignTerrain(tiles, cols, rows, seed);
+
+  // Keep the financed sites on clear ground and guarantee a buildable route.
+  const pad = starterPadAnchor();
+  const batt = starterBatteryAnchor();
+  const ref = refineryAnchor(cols, rows);
+  clearSite(tiles, pad.x, pad.y, 2);
+  clearSite(tiles, batt.x, batt.y, 2);
+  clearSite(tiles, ref.x, ref.y, 2);
+  carveCorridor(tiles, pad, batt);
+  carveCorridor(tiles, batt, ref);
+
   return tiles;
 }
 
 export function refineryAnchor(cols: number, rows: number): { x: number; y: number } {
-  return { x: cols - 2, y: rows - 2 };
+  return { x: cols - 3, y: rows - 3 };
 }
 
 export function starterPadAnchor(): { x: number; y: number } {
@@ -99,5 +197,5 @@ export function starterPadAnchor(): { x: number; y: number } {
 }
 
 export function starterBatteryAnchor(): { x: number; y: number } {
-  return { x: 8, y: 12 };
+  return { x: 9, y: 13 };
 }

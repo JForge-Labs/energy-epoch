@@ -5,7 +5,7 @@ export const BATTERY_CRUDE_CAP_BBL = 1_500;
 export const BATTERY_CLEAN_CAP_BBL = 1_500;
 export const TRUCK_CAP_BBL = 180;
 /** Battery treats crude → clean (bbl / sim-day) */
-export const BATTERY_TREAT_BBL_PER_DAY = 480;
+export const BATTERY_TREAT_BBL_PER_DAY = 1_000;
 
 export const FLARE_REP_PER_MCF = 0.002;
 export const GAS_SALE_REP_PER_MCF = 0.0015;
@@ -23,6 +23,21 @@ export const STARTING_WORKING_CASH = FACILITY_LIMIT - FACILITY_PACKAGE_COST;
 export const STARTER_REFINERY_SLOT_BPD = 1_200;
 
 export const ROAD_COST = 1_200;
+/** Bridging a creek with road/pipe costs a premium over open ground. */
+export const BRIDGE_COST = 7_500;
+/** Salvage fraction recovered when selling/scrapping a placed asset */
+export const SELL_REFUND_RATE = 0.75;
+
+/** Pipelines — capex per tile; auto-flow, no ongoing haul labor. */
+export const OIL_PIPE_COST = 6_000;
+export const GAS_PIPE_COST = 5_000;
+/** Oil pipe intake (bbl/day) — high; refinery slot still caps actual sales. */
+export const OIL_PIPE_FLOW_BPD = 4_000;
+
+/** Gas plant — premium piped-gas buyer (vs the cheap flare-stopping gas line). */
+export const GAS_PLANT_COST = 300_000;
+export const GAS_PLANT_PREMIUM = 1.6;
+
 export const EXPLORE_COST = 40_000;
 export const GAS_LINE_COST = 55_000;
 export const EXTRA_TRUCK_COST = 85_000;
@@ -47,8 +62,8 @@ export const DRILL_DAYS: Record<ZoneTier, number> = {
 };
 
 export const DEFAULT_CONFIG = {
-  cols: 28,
-  rows: 18,
+  cols: 40,
+  rows: 24,
   tileSize: 36,
   startingCash: STARTING_WORKING_CASH,
   tickSeconds: 0.2,

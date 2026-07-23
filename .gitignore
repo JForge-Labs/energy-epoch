@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Smoke-test bundle output (source is smoke.ts, run via `npm test`)
+smoke.mjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

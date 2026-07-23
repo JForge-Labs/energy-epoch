@@ -6,10 +6,15 @@ import {
   EXPLORE_COST,
   EXTRA_TRUCK_COST,
   GAS_LINE_COST,
+  GAS_PIPE_COST,
+  GAS_PLANT_COST,
+  OIL_PIPE_COST,
   PERMIT_COST,
+  ROAD_COST,
   UPGRADE_RIG_COST,
 } from "./game/data/economy";
 import { canvasToTile, renderGame } from "./game/render";
+import type { PixiRenderer } from "./game/renderPixi";
 import type { BuildTool } from "./game/types";
 
 const CONFIRM_TOOLS = new Set<BuildTool>([
@@ -20,6 +25,7 @@ const CONFIRM_TOOLS = new Set<BuildTool>([
   "draw_credit",
   "buy_permit",
   "gas_line",
+  "gas_plant",
 ]);
 
 const COST: Partial<Record<BuildTool, number>> = {
@@ -29,6 +35,7 @@ const COST: Partial<Record<BuildTool, number>> = {
   draw_credit: 250_000,
   buy_permit: PERMIT_COST,
   gas_line: GAS_LINE_COST,
+  gas_plant: GAS_PLANT_COST,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -68,7 +75,7 @@ app.innerHTML = `
       <div id="ledger-body">—</div>
     </div>
     <div class="guide-bar" id="guide-bar"></div>
-    <div class="help-chip">Scroll zoom · Drag pan · Right-click inspect · Tools disarm after use</div>
+    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay a line · Right-click inspect</div>
     <div class="toast" id="toast"></div>
     <div class="confirm-banner" id="confirm-banner" hidden></div>
     <div class="gameover" id="gameover" hidden>
@@ -82,7 +89,12 @@ app.innerHTML = `
   <footer class="bottom-bar">
     <button class="tool-btn active" data-tool="select" type="button">Select</button>
     <button class="tool-btn" data-tool="road" type="button">Road</button>
+    <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="gas_plant" type="button">Gas plant · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
     <button class="tool-btn" data-tool="move_rig" type="button">Move rig</button>
+    <button class="tool-btn" data-tool="choke" type="button">Choke well</button>
     <button class="tool-btn" data-tool="drill" type="button">Drill</button>
     <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
@@ -96,7 +108,11 @@ app.innerHTML = `
 `;
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
-const ctx = canvas.getContext("2d")!;
+// Opt into the WebGL/PixiJS renderer with `?pixi`. Canvas 2D stays the default
+// so the proven path is never at risk while the Pixi scaffold reaches parity.
+const USE_PIXI = new URLSearchParams(location.search).has("pixi");
+const ctx = USE_PIXI ? null : canvas.getContext("2d")!;
+let pixi: PixiRenderer | null = null;
 const hoverTip = document.querySelector<HTMLDivElement>("#hover-tip")!;
 const inspectBody = document.querySelector<HTMLDivElement>("#inspect-body")!;
 const dashBody = document.querySelector<HTMLDivElement>("#dash-body")!;
@@ -120,6 +136,10 @@ let lastPanY = 0;
 let panDist = 0;
 
 function resize() {
+  if (USE_PIXI) {
+    pixi?.resize();
+    return;
+  }
   const wrap = canvas.parentElement!;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.floor(wrap.clientWidth * dpr);
@@ -127,6 +147,20 @@ function resize() {
 }
 window.addEventListener("resize", resize);
 resize();
+
+if (USE_PIXI) {
+  // Lazy-load Pixi so the default canvas bundle stays lightweight.
+  import("./game/renderPixi")
+    .then(({ PixiRenderer }) => {
+      pixi = new PixiRenderer(canvas);
+      return pixi.init();
+    })
+    .then(() => pixi?.resize())
+    .catch((err) => {
+      console.error("Pixi renderer failed to init:", err);
+      flash("WebGL renderer failed — reload without ?pixi for canvas.");
+    });
+}
 
 function money(n: number) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -164,7 +198,52 @@ function disarmToSelect() {
   setActiveTool("select");
 }
 
+const SAVE_KEY = "energy-epoch-save";
+// Bump on state-schema changes: 2 footprints, 3 terrain + bigger map + pipes.
+const SAVE_VERSION = 3;
+
+function saveGame() {
+  try {
+    localStorage.setItem(
+      SAVE_KEY,
+      JSON.stringify({ v: SAVE_VERSION, cam, game: game.serialize() }),
+    );
+  } catch {
+    // storage full / unavailable — non-fatal, game keeps running in memory
+  }
+}
+
+function loadGame(): boolean {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    if (snap.v !== SAVE_VERSION || !snap.game) return false;
+    // Dimension guard: ignore saves that don't match the current map size.
+    const t = snap.game.tiles;
+    if (
+      !Array.isArray(t) ||
+      t.length !== game.config.rows ||
+      !Array.isArray(t[0]) ||
+      t[0].length !== game.config.cols
+    ) {
+      return false;
+    }
+    game.applyState(snap.game);
+    if (snap.cam) {
+      cam.x = snap.cam.x;
+      cam.y = snap.cam.y;
+      cam.zoom = snap.cam.zoom;
+      clampCamera(cam, game.config.cols, game.config.rows);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resetLease() {
+  localStorage.removeItem(SAVE_KEY);
   game = new Game();
   cam = createCamera(game.config.cols, game.config.rows);
   clearConfirm();
@@ -174,6 +253,7 @@ function resetLease() {
   inspectBody.textContent = "Hover tiles · Right-click to pin";
   flash("Lease reset. Build cardinal roads pad→battery→refinery, then drill.");
   syncAll();
+  saveGame();
 }
 
 document.querySelector("#btn-home")!.addEventListener("click", () => {
@@ -293,29 +373,13 @@ canvas.addEventListener(
   { passive: false },
 );
 
-canvas.addEventListener("pointerdown", (e) => {
-  if (e.button === 1 || e.button === 2) {
-    panning = true;
-    panButton = e.button;
-    lastPanX = e.clientX;
-    lastPanY = e.clientY;
-    panDist = 0;
-    canvas.setPointerCapture(e.pointerId);
-    return;
-  }
-  if (e.button !== 0) return;
-  const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
-  if (!tile) return;
-
+// Left-button click actions, run on pointer-up only when the gesture was a
+// click (not a drag). A drag with the left button pans (or lays road).
+function handleTileClick(tile: { x: number; y: number }) {
   const tool = game.tool;
 
   if (tool === "explore") {
-    if (
-      !askConfirm(
-        "explore",
-        `3×3 survey centered ${tile.x},${tile.y}.`,
-      )
-    ) {
+    if (!askConfirm("explore", `3×3 survey centered ${tile.x},${tile.y}.`)) {
       return;
     }
     game.buyExploration(tile.x, tile.y);
@@ -326,8 +390,21 @@ canvas.addEventListener("pointerdown", (e) => {
   }
 
   if (tool === "gas_line") {
-    if (!askConfirm("gas_line", `Place at ${tile.x},${tile.y}.`)) return;
+    if (!askConfirm("gas_line", `Ties in the nearest well by ${tile.x},${tile.y}.`)) {
+      return;
+    }
     game.placeGasLine(tile.x, tile.y);
+    flash(game.message);
+    disarmToSelect();
+    syncAll();
+    return;
+  }
+
+  if (tool === "gas_plant") {
+    if (!askConfirm("gas_plant", `2×2 plant with top-left at ${tile.x},${tile.y}.`)) {
+      return;
+    }
+    game.placeGasPlant(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
     syncAll();
@@ -345,22 +422,114 @@ canvas.addEventListener("pointerdown", (e) => {
   inspectBody.textContent = pinnedInspect;
   flash(game.message);
 
-  if (tool === "road" || tool === "move_rig") {
-    // keep road/move armed for multi-place / pathing
+  if (
+    tool === "road" ||
+    tool === "oil_pipe" ||
+    tool === "gas_pipe" ||
+    tool === "sell" ||
+    tool === "choke" ||
+    tool === "move_rig"
+  ) {
+    // keep road/pipe/sell/choke/move armed for multi-place / toggle / pathing
   } else if (tool !== "select") {
     disarmToSelect();
   }
   syncAll();
+}
+
+// Tools that "paint" across a left-drag (multi-tile place / remove).
+function isPaintTool(tool: BuildTool): boolean {
+  return (
+    tool === "road" ||
+    tool === "oil_pipe" ||
+    tool === "gas_pipe" ||
+    tool === "sell"
+  );
+}
+
+// Apply the active paint tool to one tile; return false to abort the stroke.
+function applyToolTile(x: number, y: number): boolean {
+  if (game.tool === "road") {
+    if (game.player.cash < ROAD_COST) {
+      flash(`Out of cash for road at ${x},${y}.`);
+      return false;
+    }
+    game.layRoad(x, y);
+  } else if (game.tool === "oil_pipe") {
+    if (game.player.cash < OIL_PIPE_COST) {
+      flash(`Out of cash for oil pipe at ${x},${y}.`);
+      return false;
+    }
+    game.layPipe(x, y, "oil");
+  } else if (game.tool === "gas_pipe") {
+    if (game.player.cash < GAS_PIPE_COST) {
+      flash(`Out of cash for gas pipe at ${x},${y}.`);
+      return false;
+    }
+    game.layPipe(x, y, "gas");
+  } else if (game.tool === "sell") {
+    game.sellAt(x, y);
+  }
+  return true;
+}
+
+// Walk a cardinal staircase between two tiles so a fast drag never skips
+// tiles (roads stay truck-continuous; sell clears the whole line). `from`
+// is assumed already handled.
+function paintLine(from: { x: number; y: number }, to: { x: number; y: number }) {
+  let cx = from.x;
+  let cy = from.y;
+  let guard = 0;
+  while ((cx !== to.x || cy !== to.y) && guard++ < 256) {
+    const rx = to.x - cx;
+    const ry = to.y - cy;
+    if ((Math.abs(rx) >= Math.abs(ry) && rx !== 0) || ry === 0) {
+      cx += Math.sign(rx);
+    } else {
+      cy += Math.sign(ry);
+    }
+    if (!applyToolTile(cx, cy)) return;
+  }
+}
+
+const DRAG_THRESHOLD = 6; // canvas px before a left-press becomes a drag
+let leftDown = false;
+let downClientX = 0;
+let downClientY = 0;
+let downTile: { x: number; y: number } | null = null;
+let dragKind: "pan" | "paint" | null = null;
+let lastPaintTile: { x: number; y: number } | null = null;
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.button === 1 || e.button === 2) {
+    panning = true;
+    panButton = e.button;
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    panDist = 0;
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  if (e.button !== 0) return;
+  leftDown = true;
+  dragKind = null;
+  lastPaintTile = null;
+  downClientX = e.clientX;
+  downClientY = e.clientY;
+  downTile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+  canvas.setPointerCapture(e.pointerId);
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+
+  // Middle/right-button pan
   if (panning) {
-    const rect = canvas.getBoundingClientRect();
     const canvasDx = (e.clientX - lastPanX) * (canvas.width / rect.width);
     const canvasDy = (e.clientY - lastPanY) * (canvas.height / rect.height);
     panDist += Math.hypot(canvasDx, canvasDy);
     // Ignore tiny jitter so right-click inspect doesn't fling the camera
-    if (panDist > 6) {
+    if (panDist > DRAG_THRESHOLD) {
       const tsize = game.config.tileSize * cam.zoom;
       cam.x -= canvasDx / tsize;
       cam.y -= canvasDy / tsize;
@@ -369,6 +538,57 @@ canvas.addEventListener("pointermove", (e) => {
     lastPanX = e.clientX;
     lastPanY = e.clientY;
     return;
+  }
+
+  // Left-button drag: pan (any tool but Road) or lay road (Road tool)
+  if (leftDown) {
+    if (dragKind === null) {
+      const dist = Math.hypot(
+        (e.clientX - downClientX) * (canvas.width / rect.width),
+        (e.clientY - downClientY) * (canvas.height / rect.height),
+      );
+      if (dist > DRAG_THRESHOLD) {
+        if (isPaintTool(game.tool)) {
+          dragKind = "paint";
+          if (downTile) {
+            applyToolTile(downTile.x, downTile.y);
+            lastPaintTile = downTile;
+            flash(game.message);
+            syncAll();
+          }
+        } else {
+          dragKind = "pan";
+          lastPanX = e.clientX;
+          lastPanY = e.clientY;
+        }
+      }
+    }
+
+    if (dragKind === "pan") {
+      const canvasDx = (e.clientX - lastPanX) * (canvas.width / rect.width);
+      const canvasDy = (e.clientY - lastPanY) * (canvas.height / rect.height);
+      const tsize = game.config.tileSize * cam.zoom;
+      cam.x -= canvasDx / tsize;
+      cam.y -= canvasDy / tsize;
+      clampCamera(cam, game.config.cols, game.config.rows);
+      lastPanX = e.clientX;
+      lastPanY = e.clientY;
+      return;
+    }
+
+    if (dragKind === "paint") {
+      const t = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+      if (
+        t &&
+        (!lastPaintTile || t.x !== lastPaintTile.x || t.y !== lastPaintTile.y)
+      ) {
+        paintLine(lastPaintTile ?? t, t);
+        lastPaintTile = t;
+        flash(game.message);
+        syncAll();
+      }
+      return;
+    }
   }
 
   hover = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
@@ -387,7 +607,7 @@ canvas.addEventListener("pointermove", (e) => {
 canvas.addEventListener("pointerup", (e) => {
   if (panning && e.button === panButton) {
     // Right-click without drag = pin inspect
-    if (panButton === 2 && panDist <= 6) {
+    if (panButton === 2 && panDist <= DRAG_THRESHOLD) {
       const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
       if (tile) {
         pinnedInspect = game.inspectAt(tile.x, tile.y);
@@ -398,6 +618,17 @@ canvas.addEventListener("pointerup", (e) => {
     panning = false;
     panButton = -1;
     panDist = 0;
+    return;
+  }
+
+  if (e.button === 0 && leftDown) {
+    leftDown = false;
+    // A clean click (no drag) triggers the tool action
+    if (dragKind === null && downTile) {
+      handleTileClick(downTile);
+    }
+    dragKind = null;
+    lastPaintTile = null;
   }
 });
 canvas.addEventListener("pointerleave", () => {
@@ -467,9 +698,13 @@ function syncDash() {
   const truckLine = d.trucks
     .map((t) => `${t.job}${t.cargo > 0 ? ` ${t.kind}:${t.cargo.toFixed(0)}` : ""}`)
     .join(" · ");
+  const prodBopd = d.oilBopd;
+  const treatWarn = prodBopd > d.treatCap ? " warn" : "";
   dashBody.innerHTML = `
+    ${d.advice ? `<div class="advice">⚠ ${d.advice}</div>` : ""}
     <div>${d.wellCount} wells · <strong>${d.oilBopd.toFixed(0)}</strong> bopd · <strong>${d.gasMcfd.toFixed(0)}</strong> mcf/d</div>
     <div>Battery crude ${d.crude.toFixed(0)}/${d.crudeCap} · clean ${d.clean.toFixed(0)}/${d.cleanCap}</div>
+    <div class="cap-line">Capacity: <span class="${treatWarn}">treat ${prodBopd.toFixed(0)}/${d.treatCap} bpd</span> · sales ${d.refSlotUsed.toFixed(0)}/${d.refSlotCap} bpd today${d.oilPiped ? ' · <span class="piped">oil pipe ✓</span>' : ""}${d.gasPlants ? ` · ${d.gasPlants} gas plant${d.gasPlants > 1 ? "s" : ""}` : ""}</div>
     <div>Trucks: ${truckLine || "none"}</div>
     <div>Today rev $${money(d.revenueToday)} · opex $${money(d.opexToday)} · int $${money(d.interestToday)}</div>
     ${d.stranded ? `<div class="warn">${d.stranded} stranded wellhead(s) — check guide</div>` : ""}
@@ -509,7 +744,8 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   game.update(dt);
-  renderGame(ctx, game, cam, hover);
+  if (pixi?.ready) pixi.render(game, cam, hover);
+  else if (ctx) renderGame(ctx, game, cam, hover);
   syncHud();
   syncDash();
   if (game.message !== lastMsg) {
@@ -519,10 +755,20 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
+const restored = loadGame();
 syncAll();
 flash(
-  "Cardinal roads only (N/E/S/W). Costly tools need a second click to confirm. Ops/Rep are clickable.",
+  restored
+    ? "Session restored. Autosaves as you play — Reset lease starts fresh."
+    : "Cardinal roads only (N/E/S/W). Costly tools need a second click to confirm. Ops/Rep are clickable.",
 );
 requestAnimationFrame(frame);
+
+// Persist periodically and on tab hide / reload so progress survives refreshes.
+window.setInterval(saveGame, 4000);
+window.addEventListener("pagehide", saveGame);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveGame();
+});
 
 void CONFIRM_TOOLS;

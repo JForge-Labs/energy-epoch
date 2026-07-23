@@ -220,6 +220,27 @@ body {
   margin-top: 0.25rem;
 }
 
+.advice {
+  margin: 0 0 0.4rem;
+  padding: 0.35rem 0.45rem;
+  border-left: 3px solid var(--amber-hot);
+  background: rgba(240, 192, 64, 0.1);
+  color: var(--amber-hot);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.cap-line .warn,
+.cap-line span.warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.cap-line .piped {
+  color: var(--ok);
+  font-weight: 600;
+}
+
 .confirm-banner {
   position: absolute;
   left: 50%;

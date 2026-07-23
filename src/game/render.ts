@@ -7,6 +7,20 @@ const C = {
   ground: "#243028",
   groundAlt: "#1f2a24",
   scrub: "#2a382c",
+  water: "#1e3a4a",
+  waterAlt: "#254a5c",
+  waterRipple: "rgba(150, 200, 220, 0.18)",
+  creek: "#2f6a7a",
+  creekAlt: "#356f80",
+  rock: "#413d37",
+  rockAlt: "#4a453d",
+  rockPeak: "#5c5648",
+  rockShadow: "#2c2924",
+  oilPipe: "#c07a2e",
+  oilPipeCore: "#e8a24a",
+  gasPipe: "#4aa892",
+  gasPipeCore: "#7fd0bb",
+  plant: "#4a8a7a",
   road: "#4a5048",
   roadEdge: "#6a7068",
   pad: "#3a4538",
@@ -34,8 +48,123 @@ const C = {
 function surfaceColor(tile: Tile, x: number, y: number): string {
   if (tile.hasRoad) return C.road;
   if (tile.isPad) return C.pad;
-  if (tile.surface === "scrub") return C.scrub;
-  return (x + y) % 2 === 0 ? C.ground : C.groundAlt;
+  const even = (x + y) % 2 === 0;
+  switch (tile.terrain) {
+    case "water":
+      return even ? C.water : C.waterAlt;
+    case "creek":
+      return even ? C.creek : C.creekAlt;
+    case "rock":
+      return even ? C.rock : C.rockAlt;
+    case "scrub":
+      return C.scrub;
+    default:
+      return even ? C.ground : C.groundAlt;
+  }
+}
+
+/** Decorate obstacle terrain — mountain peaks, water ripples — for depth. */
+function drawTerrainDecor(
+  ctx: CanvasRenderingContext2D,
+  tile: Tile,
+  px: number,
+  py: number,
+  size: number,
+) {
+  if (tile.hasRoad) return;
+  if (tile.terrain === "rock") {
+    ctx.fillStyle = C.rockShadow;
+    ctx.beginPath();
+    ctx.moveTo(px + size * 0.12, py + size * 0.82);
+    ctx.lineTo(px + size * 0.5, py + size * 0.24);
+    ctx.lineTo(px + size * 0.88, py + size * 0.82);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = C.rockPeak;
+    ctx.beginPath();
+    ctx.moveTo(px + size * 0.5, py + size * 0.24);
+    ctx.lineTo(px + size * 0.66, py + size * 0.52);
+    ctx.lineTo(px + size * 0.42, py + size * 0.52);
+    ctx.closePath();
+    ctx.fill();
+  } else if (tile.terrain === "water") {
+    ctx.strokeStyle = C.waterRipple;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px + size * 0.2, py + size * 0.42);
+    ctx.quadraticCurveTo(
+      px + size * 0.35,
+      py + size * 0.34,
+      px + size * 0.5,
+      py + size * 0.42,
+    );
+    ctx.quadraticCurveTo(
+      px + size * 0.65,
+      py + size * 0.5,
+      px + size * 0.8,
+      py + size * 0.42,
+    );
+    ctx.moveTo(px + size * 0.25, py + size * 0.64);
+    ctx.quadraticCurveTo(
+      px + size * 0.4,
+      py + size * 0.56,
+      px + size * 0.55,
+      py + size * 0.64,
+    );
+    ctx.stroke();
+  }
+}
+
+/** Draw the pipe segments on a tile as a connected network. */
+function drawPipeTile(
+  ctx: CanvasRenderingContext2D,
+  tiles: Tile[][],
+  x: number,
+  y: number,
+  px: number,
+  py: number,
+  size: number,
+  kind: "oilPipe" | "gasPipe",
+) {
+  const tile = tiles[y][x];
+  if (!tile[kind]) return;
+  const cx = px + size / 2;
+  const cy = py + size / 2;
+  const casing = kind === "oilPipe" ? C.oilPipe : C.gasPipe;
+  const core = kind === "oilPipe" ? C.oilPipeCore : C.gasPipeCore;
+  const outer = Math.max(4, size * 0.26);
+  const inner = Math.max(2, size * 0.13);
+  const neighbors: [number, number][] = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ];
+  const drawRun = (w: number, color: string) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w;
+    ctx.lineCap = "round";
+    let connected = false;
+    for (const [dx, dy] of neighbors) {
+      const nb = tiles[y + dy]?.[x + dx];
+      if (nb && nb[kind]) {
+        connected = true;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (dx * size) / 2, cy + (dy * size) / 2);
+        ctx.stroke();
+      }
+    }
+    // Lone node still reads as pipe (a stub / endpoint).
+    if (!connected) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, w * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+  };
+  drawRun(outer, casing);
+  drawRun(inner, core);
 }
 
 function prospectOverlay(tile: Tile): string | null {
@@ -123,6 +252,15 @@ function drawWell(
     ctx.font = `${Math.max(9, Math.floor(size * 0.22))}px monospace`;
     ctx.fillText("DUSTER", px + 2, py + size - 4);
   }
+  if (well.status === "producing" && well.choked) {
+    // Red "shut in" ring + bar so throttled wells read at a glance.
+    ctx.strokeStyle = "#c45c26";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + size * 0.15, py + size * 0.15, size * 0.7, size * 0.7);
+    ctx.fillStyle = "#c45c26";
+    ctx.font = `bold ${Math.max(8, Math.floor(size * 0.2))}px monospace`;
+    ctx.fillText("SHUT", px + size * 0.2, py + size * 0.55);
+  }
 }
 
 function drawBuilding(
@@ -173,19 +311,22 @@ function drawBuilding(
       break;
     }
     case "battery": {
+      // Scale to footprint (1×2 by default): crude tank + clean tank across the width.
+      const sw = size * (b.w ?? 1) - pad * 2;
+      const sh = size * (b.h ?? 1) - pad * 2;
       ctx.fillStyle = C.battery;
-      ctx.fillRect(s * 0.05, s * 0.2, s * 0.4, s * 0.6);
-      ctx.fillRect(s * 0.55, s * 0.2, s * 0.4, s * 0.6);
+      ctx.fillRect(sw * 0.05, sh * 0.2, sw * 0.4, sh * 0.6);
+      ctx.fillRect(sw * 0.55, sh * 0.2, sw * 0.4, sh * 0.6);
       const crudeFill = b.crudeCap ? Math.min(1, b.crude / b.crudeCap) : 0;
       const cleanFill = b.cleanCap ? Math.min(1, b.clean / b.cleanCap) : 0;
       ctx.fillStyle = "#1a1008";
-      ctx.fillRect(s * 0.1, s * 0.7 - s * 0.45 * crudeFill, s * 0.3, s * 0.45 * crudeFill);
+      ctx.fillRect(sw * 0.1, sh * 0.7 - sh * 0.45 * crudeFill, sw * 0.3, sh * 0.45 * crudeFill);
       ctx.fillStyle = "#c8b070";
-      ctx.fillRect(s * 0.6, s * 0.7 - s * 0.45 * cleanFill, s * 0.3, s * 0.45 * cleanFill);
+      ctx.fillRect(sw * 0.6, sh * 0.7 - sh * 0.45 * cleanFill, sw * 0.3, sh * 0.45 * cleanFill);
       ctx.fillStyle = C.select;
       ctx.font = `bold ${Math.max(8, Math.floor(size * 0.16))}px monospace`;
-      ctx.fillText("CRUDE", 0, s * 0.14);
-      ctx.fillText("CLEAN", s * 0.5, s * 0.14);
+      ctx.fillText("CRUDE", sw * 0.02, sh * 0.14);
+      ctx.fillText("CLEAN", sw * 0.55, sh * 0.14);
       break;
     }
     case "gas_flare": {
@@ -206,14 +347,35 @@ function drawBuilding(
       break;
     }
     case "refinery": {
+      // Scale to footprint (2×2 by default): tank block with two stacks.
+      const sw = size * (b.w ?? 1) - pad * 2;
+      const sh = size * (b.h ?? 1) - pad * 2;
       ctx.fillStyle = C.refinery;
-      ctx.fillRect(s * 0.1, s * 0.2, s * 0.8, s * 0.65);
+      ctx.fillRect(sw * 0.1, sh * 0.25, sw * 0.8, sh * 0.6);
       ctx.fillStyle = "#3a3028";
-      ctx.fillRect(s * 0.2, s * 0.05, s * 0.15, s * 0.25);
-      ctx.fillRect(s * 0.55, s * 0.0, s * 0.18, s * 0.3);
+      ctx.fillRect(sw * 0.22, sh * 0.08, sw * 0.12, sh * 0.2);
+      ctx.fillRect(sw * 0.55, sh * 0.04, sw * 0.14, sh * 0.24);
       ctx.fillStyle = C.select;
-      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
-      ctx.fillText("REFINERY", 0, s * 0.95);
+      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.24))}px monospace`;
+      ctx.fillText("REFINERY", sw * 0.12, sh * 0.55);
+      break;
+    }
+    case "gas_plant": {
+      // 2×2 processing skid: body + spheres + stack.
+      const sw = size * (b.w ?? 1) - pad * 2;
+      const sh = size * (b.h ?? 1) - pad * 2;
+      ctx.fillStyle = C.plant;
+      ctx.fillRect(sw * 0.08, sh * 0.35, sw * 0.84, sh * 0.5);
+      ctx.fillStyle = "#2e3a34";
+      ctx.fillRect(sw * 0.16, sh * 0.1, sw * 0.1, sh * 0.28);
+      ctx.fillStyle = C.gasPipeCore;
+      ctx.beginPath();
+      ctx.arc(sw * 0.5, sh * 0.32, sh * 0.16, 0, Math.PI * 2);
+      ctx.arc(sw * 0.74, sh * 0.34, sh * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = C.select;
+      ctx.font = `bold ${Math.max(8, Math.floor(size * 0.2))}px monospace`;
+      ctx.fillText("GAS PLANT", sw * 0.1, sh * 0.7);
       break;
     }
   }
@@ -285,6 +447,7 @@ export function renderGame(
       }
       ctx.fillStyle = surfaceColor(tile, x, y);
       ctx.fillRect(px, py, size, size);
+      drawTerrainDecor(ctx, tile, px, py, size);
 
       if (tile.hasRoad) {
         ctx.strokeStyle = C.roadEdge;
@@ -311,6 +474,9 @@ export function renderGame(
       ctx.strokeStyle = C.grid;
       ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+
+      drawPipeTile(ctx, game.tiles, x, y, px, py, size, "oilPipe");
+      drawPipeTile(ctx, game.tiles, x, y, px, py, size, "gasPipe");
     }
   }
 
