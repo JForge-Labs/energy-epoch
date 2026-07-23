@@ -1,29 +1,28 @@
-/** Energy Epoch — core types (wildcat / Factorio loop) */
+/** Energy Epoch — core types */
 
 export type ZoneTier = 0 | 1 | 2 | 3;
 
-/** Hidden until drilled or (partially) via exploration */
 export interface Subsurface {
-  /** Peak oil rate bbl/day if productive */
   oilIp: number;
-  /** Peak gas rate mcf/day if productive */
   gasIp: number;
-  /** Exponential decline fraction per sim-day */
   declinePerDay: number;
   zone: ZoneTier;
-  /** 0–1 richness used when rolling a well */
+  /** 0–1 richness; wildcat roll input */
   prospect: number;
+  /** Special area — needs permit + enough reputation */
+  special: boolean;
 }
 
 export interface Tile {
-  /** Surface — always look empty-ish; no resource tells */
   surface: "ground" | "scrub" | "road";
   subsurface: Subsurface;
-  /** Exploration survey revealed this tile's zone */
   surveyed: boolean;
-  /** A wellbore exists here (dry or wet) */
   drilled: boolean;
   wellId: string | null;
+  /** Player-owned starter / purchased pad */
+  isPad: boolean;
+  /** Player-built road */
+  hasRoad: boolean;
 }
 
 export type WellStatus = "drilling" | "producing" | "duster" | "shut_in";
@@ -33,9 +32,7 @@ export interface Well {
   x: number;
   y: number;
   status: WellStatus;
-  /** Current oil bbl/day */
   oilRate: number;
-  /** Current gas mcf/day */
   gasRate: number;
   oilIp: number;
   gasIp: number;
@@ -43,13 +40,14 @@ export interface Well {
   ageDays: number;
   drillProgress: number;
   drillDaysNeeded: number;
-  tankId: string | null;
+  wellheadTankId: string | null;
   pumpjackId: string | null;
 }
 
 export type BuildingKind =
   | "pumpjack"
-  | "tank"
+  | "wellhead_tank"
+  | "battery"
   | "gas_flare"
   | "gas_line"
   | "refinery";
@@ -59,37 +57,34 @@ export interface Building {
   kind: BuildingKind;
   x: number;
   y: number;
-  /** Oil bbl (tanks) or N/A */
   oil: number;
   oilCap: number;
-  /** Linked well for pumpjack / flare */
   wellId: string | null;
   online: boolean;
   hp: number;
+  /** Refinery: contracted throughput bbl/day */
+  throughputCap?: number;
+  /** Refinery: bbl received today (resets) */
+  throughputUsed?: number;
 }
 
 export type UnitKind = "drill_rig" | "truck";
+
+export type TruckJob = "idle" | "to_pickup" | "to_battery" | "to_refinery";
 
 export interface Unit {
   id: string;
   kind: UnitKind;
   x: number;
   y: number;
-  /** Pixel/tile lerp target */
-  tx: number;
-  ty: number;
-  /** Moving along path */
   path: { x: number; y: number }[];
-  /** Truck cargo bbl */
   cargo: number;
   cargoCap: number;
-  /** Busy drilling / hauling */
   busy: boolean;
-  /** Well being drilled */
   targetWellId: string | null;
-  /** Tank being served */
-  targetTankId: string | null;
-  /** Rig tier: 0 starter, higher = deeper zones */
+  /** Pickup building id (wellhead or battery) */
+  targetBuildingId: string | null;
+  job: TruckJob;
   tier: number;
 }
 
@@ -109,28 +104,51 @@ export interface WeatherState {
   hoursLeft: number;
 }
 
+export interface CreditFacility {
+  /** Outstanding principal */
+  debt: number;
+  /** Current max draw */
+  limit: number;
+  /** APR as fraction, e.g. 0.11 */
+  apr: number;
+  /** Cash interest accrued this period (HUD) */
+  interestPaidToday: number;
+  dayStamp: number;
+}
+
 export interface PlayerState {
   cash: number;
   reputation: number;
   name: string;
   explorationLevel: number;
-  /** Max zone tier the player can legally/tech drill */
   drillTech: number;
+  /** Special-zone permits held */
+  permits: number;
+  credit: CreditFacility;
+  /** Trailing operating income signal */
+  operatingGreen: boolean;
+  revenueToday: number;
+  opexToday: number;
 }
 
 export type BuildTool =
   | "select"
   | "move_rig"
   | "drill"
+  | "road"
   | "truck"
   | "gas_line"
   | "explore"
-  | "upgrade_rig";
+  | "upgrade_rig"
+  | "pay_debt"
+  | "draw_credit"
+  | "buy_permit";
 
 export interface GameConfig {
   cols: number;
   rows: number;
   tileSize: number;
+  /** Working cash after facility package */
   startingCash: number;
   tickSeconds: number;
 }

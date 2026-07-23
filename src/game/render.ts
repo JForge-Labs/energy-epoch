@@ -5,16 +5,20 @@ const C = {
   ground: "#243028",
   groundAlt: "#1f2a24",
   scrub: "#2a382c",
-  road: "#3a403c",
+  road: "#4a5048",
+  roadEdge: "#6a7068",
+  pad: "#3a4538",
   grid: "#2e3a32",
   zone0: "rgba(107, 158, 107, 0.18)",
   zone1: "rgba(212, 160, 23, 0.16)",
   zone2: "rgba(196, 92, 38, 0.18)",
   zone3: "rgba(140, 60, 90, 0.2)",
+  special: "rgba(200, 80, 120, 0.35)",
   rig: "#d4a017",
   truck: "#8a9aaa",
   jack: "#c4a35a",
   tank: "#6a7a82",
+  battery: "#5a8a9a",
   flare: "#e07030",
   gas: "#5a9e8a",
   refinery: "#9a6a4a",
@@ -25,13 +29,15 @@ const C = {
 };
 
 function surfaceColor(tile: Tile, x: number, y: number): string {
-  if (tile.surface === "road") return C.road;
+  if (tile.hasRoad) return C.road;
+  if (tile.isPad) return C.pad;
   if (tile.surface === "scrub") return C.scrub;
   return (x + y) % 2 === 0 ? C.ground : C.groundAlt;
 }
 
 function zoneOverlay(tile: Tile): string | null {
   if (!tile.surveyed) return null;
+  if (tile.subsurface.special) return C.special;
   return [C.zone0, C.zone1, C.zone2, C.zone3][tile.subsurface.zone] ?? null;
 }
 
@@ -47,7 +53,13 @@ function drawWell(
     ctx.lineWidth = 2;
     const p = well.drillProgress / well.drillDaysNeeded;
     ctx.beginPath();
-    ctx.arc(px + size / 2, py + size / 2, size * 0.28, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
+    ctx.arc(
+      px + size / 2,
+      py + size / 2,
+      size * 0.28,
+      -Math.PI / 2,
+      -Math.PI / 2 + p * Math.PI * 2,
+    );
     ctx.stroke();
     return;
   }
@@ -88,16 +100,26 @@ function drawBuilding(
       ctx.stroke();
       break;
     }
-    case "tank": {
+    case "wellhead_tank": {
       ctx.fillStyle = C.tank;
       ctx.beginPath();
-      ctx.ellipse(s * 0.5, s * 0.55, s * 0.4, s * 0.34, 0, 0, Math.PI * 2);
+      ctx.ellipse(s * 0.5, s * 0.55, s * 0.32, s * 0.28, 0, 0, Math.PI * 2);
       ctx.fill();
       const fill = b.oilCap ? Math.min(1, b.oil / b.oilCap) : 0;
       ctx.fillStyle = "#1a1008";
       ctx.beginPath();
-      ctx.ellipse(s * 0.5, s * 0.55, s * 0.4 * fill, s * 0.34 * fill, 0, 0, Math.PI * 2);
+      ctx.ellipse(s * 0.5, s * 0.55, s * 0.32 * fill, s * 0.28 * fill, 0, 0, Math.PI * 2);
       ctx.fill();
+      break;
+    }
+    case "battery": {
+      ctx.fillStyle = C.battery;
+      ctx.fillRect(s * 0.1, s * 0.25, s * 0.35, s * 0.55);
+      ctx.fillRect(s * 0.55, s * 0.25, s * 0.35, s * 0.55);
+      const fill = b.oilCap ? Math.min(1, b.oil / b.oilCap) : 0;
+      ctx.fillStyle = "#1a1008";
+      ctx.fillRect(s * 0.14, s * 0.7 - s * 0.4 * fill, s * 0.27, s * 0.4 * fill);
+      ctx.fillRect(s * 0.59, s * 0.7 - s * 0.4 * fill, s * 0.27, s * 0.4 * fill);
       break;
     }
     case "gas_flare": {
@@ -189,6 +211,12 @@ export function renderGame(
       ctx.fillStyle = surfaceColor(tile, x, y);
       ctx.fillRect(px, py, tileSize, tileSize);
 
+      if (tile.hasRoad) {
+        ctx.strokeStyle = C.roadEdge;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px + 4, py + 4, tileSize - 8, tileSize - 8);
+      }
+
       const zo = zoneOverlay(tile);
       if (zo) {
         ctx.fillStyle = zo;
@@ -215,7 +243,7 @@ export function renderGame(
   }
 
   for (const b of game.buildings) {
-    if (b.kind === "gas_flare") continue; // draw after jack
+    if (b.kind === "gas_flare") continue;
     drawBuilding(ctx, b, ox + b.x * tileSize, oy + b.y * tileSize, tileSize);
   }
   for (const well of game.wells) {

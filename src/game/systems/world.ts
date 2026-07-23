@@ -44,14 +44,12 @@ export function tickWeather(w: WeatherState, dtHours: number): WeatherState {
   return { kind, intensity, hoursLeft };
 }
 
-/** Movement speed multiplier under weather */
 export function weatherMoveMul(w: WeatherState): number {
   if (w.kind === "clear") return 1;
   if (w.kind === "storm") return 1 - w.intensity * 0.45;
   return 1 - w.intensity * 0.25;
 }
 
-/** Drill speed multiplier */
 export function weatherDrillMul(w: WeatherState): number {
   if (w.kind === "storm" || w.kind === "lightning_cell") {
     return 1 - w.intensity * 0.55;

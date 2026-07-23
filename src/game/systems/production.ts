@@ -4,7 +4,7 @@ import {
   GAS_SALE_REP_PER_MCF,
   SPILL_CLEANUP_PER_BBL,
   SPILL_REP_PER_BBL,
-  TANK_CAP_BBL,
+  WELLHEAD_CAP_BBL,
 } from "../data/economy";
 
 export interface ProdResult {
@@ -17,11 +17,6 @@ export interface ProdResult {
   messages: string[];
 }
 
-function tankForWell(well: Well, buildings: Building[]): Building | undefined {
-  if (!well.tankId) return undefined;
-  return buildings.find((b) => b.id === well.tankId);
-}
-
 function hasGasLine(well: Well, buildings: Building[]): boolean {
   return buildings.some(
     (b) =>
@@ -31,10 +26,6 @@ function hasGasLine(well: Well, buildings: Building[]): boolean {
   );
 }
 
-/**
- * Advance producing wells by dtDays.
- * Oil → tank (spill if over). Gas → flare or sell.
- */
 export function simulateProduction(
   wells: Well[],
   buildings: Building[],
@@ -55,13 +46,12 @@ export function simulateProduction(
   for (const well of wells) {
     if (well.status !== "producing") continue;
 
-    // Decline toward asymptotic low
     const declineFactor = Math.exp(-well.declinePerDay * dtDays);
-    well.oilRate = Math.max(0.5, well.oilRate * declineFactor);
+    well.oilRate = Math.max(0.4, well.oilRate * declineFactor);
     well.gasRate = Math.max(0, well.gasRate * declineFactor);
     well.ageDays += dtDays;
 
-    if (well.oilRate < 1.2 && well.gasRate < 5) {
+    if (well.oilRate < 1 && well.gasRate < 4) {
       well.status = "shut_in";
       result.messages.push(`Well ${well.id} declined to shut-in.`);
       continue;
@@ -72,8 +62,12 @@ export function simulateProduction(
     result.oilProduced += oil;
     result.gasProduced += gas;
 
-    const tank = tankForWell(well, buildings);
+    const tank = well.wellheadTankId
+      ? buildings.find((b) => b.id === well.wellheadTankId)
+      : undefined;
+
     if (tank && tank.online) {
+      if (tank.oilCap <= 0) tank.oilCap = WELLHEAD_CAP_BBL;
       const room = tank.oilCap - tank.oil;
       const into = Math.min(oil, Math.max(0, room));
       tank.oil += into;
@@ -83,9 +77,13 @@ export function simulateProduction(
         const cleanup = overflow * SPILL_CLEANUP_PER_BBL;
         result.spillCleanup += cleanup;
         player.cash -= cleanup;
-        player.reputation = Math.max(0, player.reputation - overflow * SPILL_REP_PER_BBL);
+        player.opexToday += cleanup;
+        player.reputation = Math.max(
+          0,
+          player.reputation - overflow * SPILL_REP_PER_BBL,
+        );
         result.messages.push(
-          `Spill at tank (${overflow.toFixed(0)} bbl). Cleanup $${cleanup.toFixed(0)}.`,
+          `Wellhead spill ${overflow.toFixed(0)} bbl — cleanup $${cleanup.toFixed(0)}.`,
         );
       }
     }
@@ -94,13 +92,13 @@ export function simulateProduction(
       if (hasGasLine(well, buildings)) {
         const revenue = gas * gasPrice;
         player.cash += revenue;
+        player.revenueToday += revenue;
         player.reputation = Math.min(
           100,
           player.reputation + gas * GAS_SALE_REP_PER_MCF,
         );
         result.gasSold += gas;
       } else {
-        // Auto flare stack assumed at well
         player.reputation = Math.max(
           0,
           player.reputation - gas * FLARE_REP_PER_MCF,
@@ -110,9 +108,24 @@ export function simulateProduction(
     }
   }
 
-  // Ensure tanks keep cap metadata
+  // Battery overflow spills
   for (const b of buildings) {
-    if (b.kind === "tank" && b.oilCap <= 0) b.oilCap = TANK_CAP_BBL;
+    if (b.kind !== "battery" || !b.online) continue;
+    if (b.oil > b.oilCap) {
+      const overflow = b.oil - b.oilCap;
+      b.oil = b.oilCap;
+      result.spilled += overflow;
+      const cleanup = overflow * SPILL_CLEANUP_PER_BBL;
+      player.cash -= cleanup;
+      player.opexToday += cleanup;
+      player.reputation = Math.max(
+        0,
+        player.reputation - overflow * SPILL_REP_PER_BBL,
+      );
+      result.messages.push(
+        `Battery spill ${overflow.toFixed(0)} bbl — get trucks moving.`,
+      );
+    }
   }
 
   return result;

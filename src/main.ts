@@ -4,6 +4,7 @@ import {
   EXPLORE_COST,
   EXTRA_TRUCK_COST,
   GAS_LINE_COST,
+  PERMIT_COST,
   UPGRADE_RIG_COST,
 } from "./game/data/economy";
 import { canvasToTile, renderGame } from "./game/render";
@@ -13,15 +14,16 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 
 app.innerHTML = `
   <header class="top-bar">
-    <div class="brand">Energy Epoch <span>// wildcat</span></div>
+    <div class="brand">Energy Epoch <span>// facility</span></div>
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
+      <div>Debt <strong id="stat-debt">$0</strong></div>
+      <div>Limit <strong id="stat-limit">$0</strong></div>
       <div>Rep <strong id="stat-rep">70</strong></div>
       <div>Oil <strong id="stat-oil">$0</strong></div>
-      <div>Gas <strong id="stat-gas">$0</strong></div>
       <div>Day <strong id="stat-day">1</strong></div>
+      <div>Ops <strong id="stat-ops">—</strong></div>
       <div>Wx <strong id="stat-wx">clear</strong></div>
-      <div>Sold <strong id="stat-sold">0</strong> bbl</div>
     </div>
   </header>
   <div class="stage-wrap">
@@ -30,12 +32,16 @@ app.innerHTML = `
   </div>
   <footer class="bottom-bar">
     <button class="tool-btn active" data-tool="select" type="button">Select</button>
+    <button class="tool-btn" data-tool="road" type="button">Road</button>
     <button class="tool-btn" data-tool="move_rig" type="button">Move rig</button>
     <button class="tool-btn" data-tool="drill" type="button">Drill</button>
     <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="truck" type="button">Buy truck · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="upgrade_rig" type="button">Upgrade rig · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="truck" type="button">Truck · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
+    <button class="tool-btn" data-tool="draw_credit" type="button">Draw $250k</button>
     <div class="tool-meta" id="tool-meta">Booting…</div>
   </footer>
 `;
@@ -67,7 +73,6 @@ function setActiveTool(tool: BuildTool) {
 document.querySelectorAll(".tool-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
-    // Instant actions that don't need a map click mode... still use click for explore/gas
     if (tool === "drill") {
       setActiveTool("drill");
       game.startDrill();
@@ -83,6 +88,24 @@ document.querySelectorAll(".tool-btn").forEach((btn) => {
     }
     if (tool === "truck") {
       game.buyTruck();
+      flash(game.message);
+      syncHud();
+      return;
+    }
+    if (tool === "pay_debt") {
+      game.payDebt();
+      flash(game.message);
+      syncHud();
+      return;
+    }
+    if (tool === "draw_credit") {
+      game.drawCredit();
+      flash(game.message);
+      syncHud();
+      return;
+    }
+    if (tool === "buy_permit") {
+      game.buyPermit();
       flash(game.message);
       syncHud();
       return;
@@ -120,15 +143,20 @@ function money(n: number) {
 
 function syncHud() {
   document.querySelector("#stat-cash")!.textContent = `$${money(game.player.cash)}`;
+  document.querySelector("#stat-debt")!.textContent = `$${money(game.player.credit.debt)}`;
+  document.querySelector("#stat-limit")!.textContent = `$${money(game.player.credit.limit)}`;
   document.querySelector("#stat-rep")!.textContent = game.player.reputation.toFixed(0);
   document.querySelector("#stat-oil")!.textContent = `$${game.market.oilPrice.toFixed(2)}`;
-  document.querySelector("#stat-gas")!.textContent = `$${game.market.gasPrice.toFixed(2)}`;
   document.querySelector("#stat-day")!.textContent = game.market.day.toFixed(1);
+  const ops = document.querySelector("#stat-ops")!;
+  ops.textContent = game.player.operatingGreen ? "GREEN" : "RED";
+  (ops as HTMLElement).style.color = game.player.operatingGreen
+    ? "var(--ok)"
+    : "var(--danger)";
   document.querySelector("#stat-wx")!.textContent =
     game.weather.kind === "clear"
       ? "clear"
-      : `${game.weather.kind} ${Math.round(game.weather.intensity * 100)}%`;
-  document.querySelector("#stat-sold")!.textContent = money(game.totalOilSold);
+      : `${game.weather.kind}`;
 }
 
 function syncMeta() {
@@ -151,5 +179,7 @@ function frame(now: number) {
 
 syncHud();
 syncMeta();
-flash("Wildcat mode: Move rig → Drill. Blind map. Truck auto-hauls to refinery.");
+flash(
+  "$5M facility: connect pad → battery → refinery with roads, then drill. Get out of debt.",
+);
 requestAnimationFrame(frame);

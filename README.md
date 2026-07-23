@@ -1,6 +1,6 @@
 # Energy Epoch
 
-Factorio-style energy ops. Wildcat drill → pumpjack + tank → truck to refinery. Gas flares hurt reputation until you build takeaway. No human opponents — weather, lightning, markets, spills, and decline are the pressure.
+Factorio-style energy ops on a **$5M credit facility**. Build **roads** from wells to **tank batteries** to the **refinery**. Wildcat with simple random outcomes. Pay interest, protect reputation, operate in the green.
 
 ## Run
 
@@ -10,15 +10,20 @@ npm install
 npm run dev
 ```
 
-## v0 loop
+## Start package (financed)
 
-1. **Move rig** onto a tile (map is blind — no resource tells).
-2. **Drill** — pay AFE, wait. Duster or ripper (oil + gas rates).
-3. Hit lands **pumpjack + tank**. Oil fills; **truck** auto-hauls to the **refinery**.
-4. Full tank with slow haul → **spill** (rep + cleanup).
-5. Gas **flares** (rep down) until you place a **gas line**.
-6. Earn → **Explore** (zone overlays), **upgrade rig** (deeper zones), more trucks.
+- $5,000,000 debt @ ~11% APR
+- ~$800k working cash
+- 1 well pad, 1 tank battery, 1 truck, refinery throughput slot, drill rig
 
-## Stack
+## Loop
 
-Vite + TypeScript + Canvas 2D.
+1. **Road**-connect pad → battery → refinery (trucks only drive roads).
+2. **Drill** the pad (or elsewhere). Duster or ripper — random IP + decline.
+3. Hit → pumpjack + wellhead tank. Trucks: wellhead → battery → refinery (slot capped).
+4. Gas flares until **gas line**. Low **rep** → fines + blocked special permits.
+5. **Pay debt** / grow borrowing base with assets + rep. Goal: green ops, clear the facility.
+
+## Later
+
+Pipelines, pumps, compression, gas plants that buy commodities.
