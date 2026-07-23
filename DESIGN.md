@@ -1,37 +1,54 @@
-# Energy Epoch — Design Brainstorm
+# Energy Epoch — Design
 
-## Pitch
+## Locked pitch
 
-Player starts as a small independent operator with basic upstream kit: a modest rig/pumpjack footprint, lease tanks, flowlines, and truck marketing. Grow the operation across the energy value chain over "epochs."
+**Factorio-style logistics + ops**, no human opponents. Adversaries are the field and the market: weather, lightning, price swings, spills, and decline.
 
-## Vertical slice (built)
+You start as a **wildcatter**. The map shows **no resources**. You punch holes with a single drill rig. Hits land a **pumpjack + lease tank**. Oil fills the tank; a **truck** hauls to a **refinery**. Overflow **spills**. Associated **gas is flared** until you build gas infra — flaring burns **reputation**; capturing/selling gas repairs it and pays.
 
-- Procedural lease with oil pads + access road
-- Build: pumpjack, tank, flowline, truck rack
-- Production → tank inventory → sell at netback
-- Simple mean-reverting spot price
+Exploration purchases reveal **zones**. Harder zones need better tech and cost more to drill.
 
-## Open decisions (for John)
+Tone: Factorio logistics meets Red Alert map presence — industry as the conflict, not villains.
 
-See agent response / next iteration notes. This file will capture locked decisions as we go.
+## Core loop (v1 target)
 
-## Tentative pillars
+1. Move / deploy the starter **drill rig** onto a tile → spend time + cash to drill.
+2. Outcome from hidden subsurface: **duster** or **producer** (oil rate, gas rate, oil/gas ratio).
+3. On a hit: **pumpjack lands**, **tank is spotted** beside it.
+4. Well **declines** over time (simple hyperbolic / exponential for now).
+5. Tank inventory rises; **truck** loads and drives to the **refinery** for cash.
+6. Full tank with nowhere to go → **spill** (oil lost, rep hit, cleanup cost).
+7. Produced gas with no takeaway → **flare** (rep down). Gas line / plant → sell gas + rep up.
+8. Earn → buy **exploration** (zone awareness), **bigger rigs**, gas kit, more trucks/tanks.
 
-1. **Operational truth** — decline, downtime, H2S/BS&W, run tickets, not cartoon barrels only
-2. **Capital discipline** — AFE mindset, LOE vs. netback, not infinite build spam
-3. **Epoch growth** — upstream → midstream → refining / power / gas / renewables (TBD)
-4. **Readable systems** — one lease readable at a glance; complexity unlocks with scale
+## Locked systems
 
-## Systems backlog (unordered)
+| System | Decision |
+|--------|----------|
+| Genre | Factorio-style builder / logistics |
+| Opponents | None (PvE: weather, lightning, markets, spills, decline) |
+| Scout info | Map starts blind; exploration reveals zones |
+| Discovery | Wildcat drill → duster or ripper |
+| Well model | Oil rate, gas rate (ratio), decline — keep simple |
+| First success | Auto pumpjack + tank |
+| Oil path | Tank → truck → refinery |
+| Tank full | Spill |
+| Gas default | Flare → reputation down |
+| Gas upgrade | Infra monetizes gas + reputation up |
+| Progression | Cash → exploration, bigger rigs, harder zones |
 
-- [ ] Reservoir / decline curves (hyperbolic)
-- [ ] Workovers, rod parts, pump-off
-- [ ] Saltwater / disposal
-- [ ] Gas: flare vs. gather vs. sell
-- [ ] Trucking logistics vs. pipeline interconnect
-- [ ] Land / mineral / royalty burdens
-- [ ] Reg / spill / safety events
-- [ ] Multi-lease map / basin select
-- [ ] Employees / contractors
-- [ ] Save / load
-- [ ] Multiplayer or async competition (maybe never)
+## Player identity
+
+Wildcatter → growing independent operator. Reputation matters (regulators / community / future access — exact mechanical hooks TBD).
+
+## Epoch ladder (draft)
+
+1. Single rig wildcat + truck oil
+2. Multi-well pad / more tanks & trucks
+3. Gas capture & sales
+4. Exploration + tiered zones / deeper tech
+5. Midstream / plant (later)
+
+## Explicitly out of v1
+
+Multiplayer, combat factions, cartoon infinite oil pads on the surface, manual “sell load” button as the only marketing path.

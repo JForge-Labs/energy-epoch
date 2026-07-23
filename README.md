@@ -1,6 +1,6 @@
 # Energy Epoch
 
-Builder / energy operations sim. Vertical slice: lease oil — pumpjack → flowline → tank → truck rack → market.
+Factorio-style energy ops. Wildcat drill → pumpjack + tank → truck to refinery. Gas flares hurt reputation until you build takeaway. No human opponents — weather, lightning, markets, spills, and decline are the pressure.
 
 ## Run
 
@@ -10,16 +10,15 @@ npm install
 npm run dev
 ```
 
-## Loop (v0)
+## v0 loop
 
-1. Amber tiles are oil pads.
-2. Place a **pumpjack** on a pad.
-3. Place a **tank** nearby, connect with **flowline**.
-4. Place a **truck rack** adjacent to the tank.
-5. Hit **Sell load** when the tank has oil.
-
-Starting cash: $120k. Spot/netback tick in the HUD.
+1. **Move rig** onto a tile (map is blind — no resource tells).
+2. **Drill** — pay AFE, wait. Duster or ripper (oil + gas rates).
+3. Hit lands **pumpjack + tank**. Oil fills; **truck** auto-hauls to the **refinery**.
+4. Full tank with slow haul → **spill** (rep + cleanup).
+5. Gas **flares** (rep down) until you place a **gas line**.
+6. Earn → **Explore** (zone overlays), **upgrade rig** (deeper zones), more trucks.
 
 ## Stack
 
-Vite + TypeScript + Canvas 2D. No engine lock-in yet — easy to swap Phaser/Three later.
+Vite + TypeScript + Canvas 2D.

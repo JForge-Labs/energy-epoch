@@ -1,6 +1,11 @@
 import "./styles.css";
 import { Game } from "./game/Game";
-import { BUILD_COSTS } from "./game/data/economy";
+import {
+  EXPLORE_COST,
+  EXTRA_TRUCK_COST,
+  GAS_LINE_COST,
+  UPGRADE_RIG_COST,
+} from "./game/data/economy";
 import { canvasToTile, renderGame } from "./game/render";
 import type { BuildTool } from "./game/types";
 
@@ -8,13 +13,14 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 
 app.innerHTML = `
   <header class="top-bar">
-    <div class="brand">Energy Epoch <span>// lease sandbox</span></div>
+    <div class="brand">Energy Epoch <span>// wildcat</span></div>
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
-      <div>Spot <strong id="stat-spot">$0</strong></div>
-      <div>Netback <strong id="stat-net">$0</strong></div>
+      <div>Rep <strong id="stat-rep">70</strong></div>
+      <div>Oil <strong id="stat-oil">$0</strong></div>
+      <div>Gas <strong id="stat-gas">$0</strong></div>
       <div>Day <strong id="stat-day">1</strong></div>
-      <div>Produced <strong id="stat-prod">0</strong> bbl</div>
+      <div>Wx <strong id="stat-wx">clear</strong></div>
       <div>Sold <strong id="stat-sold">0</strong> bbl</div>
     </div>
   </header>
@@ -24,12 +30,13 @@ app.innerHTML = `
   </div>
   <footer class="bottom-bar">
     <button class="tool-btn active" data-tool="select" type="button">Select</button>
-    <button class="tool-btn" data-tool="pumpjack" type="button">Pumpjack · $45k</button>
-    <button class="tool-btn" data-tool="tank" type="button">Tank · $28k</button>
-    <button class="tool-btn" data-tool="pipeline" type="button">Flowline · $2.5k</button>
-    <button class="tool-btn" data-tool="truck_rack" type="button">Truck rack · $18k</button>
-    <button class="tool-btn" data-tool="sell" type="button" id="btn-sell">Sell load</button>
-    <div class="tool-meta" id="tool-meta">Booting lease…</div>
+    <button class="tool-btn" data-tool="move_rig" type="button">Move rig</button>
+    <button class="tool-btn" data-tool="drill" type="button">Drill</button>
+    <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="truck" type="button">Buy truck · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="upgrade_rig" type="button">Upgrade rig · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
+    <div class="tool-meta" id="tool-meta">Booting…</div>
   </footer>
 `;
 
@@ -38,6 +45,7 @@ const ctx = canvas.getContext("2d")!;
 const game = new Game();
 let hover: { x: number; y: number } | null = null;
 let toastTimer = 0;
+let lastMsg = "";
 
 function resize() {
   const wrap = canvas.parentElement!;
@@ -59,8 +67,22 @@ function setActiveTool(tool: BuildTool) {
 document.querySelectorAll(".tool-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
-    if (tool === "sell") {
-      game.trySellLoad();
+    // Instant actions that don't need a map click mode... still use click for explore/gas
+    if (tool === "drill") {
+      setActiveTool("drill");
+      game.startDrill();
+      flash(game.message);
+      syncHud();
+      return;
+    }
+    if (tool === "upgrade_rig") {
+      game.upgradeRig();
+      flash(game.message);
+      syncHud();
+      return;
+    }
+    if (tool === "truck") {
+      game.buyTruck();
       flash(game.message);
       syncHud();
       return;
@@ -89,7 +111,7 @@ function flash(msg: string) {
   el.textContent = msg;
   el.classList.add("show");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.classList.remove("show"), 2200);
+  toastTimer = window.setTimeout(() => el.classList.remove("show"), 2400);
 }
 
 function money(n: number) {
@@ -98,21 +120,19 @@ function money(n: number) {
 
 function syncHud() {
   document.querySelector("#stat-cash")!.textContent = `$${money(game.player.cash)}`;
-  document.querySelector("#stat-spot")!.textContent = `$${game.market.spotPrice.toFixed(2)}`;
-  document.querySelector("#stat-net")!.textContent = `$${game.market.netback.toFixed(2)}`;
+  document.querySelector("#stat-rep")!.textContent = game.player.reputation.toFixed(0);
+  document.querySelector("#stat-oil")!.textContent = `$${game.market.oilPrice.toFixed(2)}`;
+  document.querySelector("#stat-gas")!.textContent = `$${game.market.gasPrice.toFixed(2)}`;
   document.querySelector("#stat-day")!.textContent = game.market.day.toFixed(1);
-  document.querySelector("#stat-prod")!.textContent = money(game.totalProduced);
-  document.querySelector("#stat-sold")!.textContent = money(game.totalSold);
+  document.querySelector("#stat-wx")!.textContent =
+    game.weather.kind === "clear"
+      ? "clear"
+      : `${game.weather.kind} ${Math.round(game.weather.intensity * 100)}%`;
+  document.querySelector("#stat-sold")!.textContent = money(game.totalOilSold);
 }
 
 function syncMeta() {
-  const meta = document.querySelector("#tool-meta")!;
-  if (game.tool in BUILD_COSTS) {
-    const c = BUILD_COSTS[game.tool as keyof typeof BUILD_COSTS];
-    meta.textContent = `${c.label}: ${c.blurb}`;
-  } else {
-    meta.textContent = game.message;
-  }
+  document.querySelector("#tool-meta")!.textContent = game.message;
 }
 
 let last = performance.now();
@@ -122,10 +142,14 @@ function frame(now: number) {
   game.update(dt);
   renderGame(ctx, game, hover);
   syncHud();
+  if (game.message !== lastMsg) {
+    lastMsg = game.message;
+    syncMeta();
+  }
   requestAnimationFrame(frame);
 }
 
 syncHud();
 syncMeta();
-flash("Welcome to Energy Epoch. Build well → flowline → tank → rack → sell.");
+flash("Wildcat mode: Move rig → Drill. Blind map. Truck auto-hauls to refinery.");
 requestAnimationFrame(frame);

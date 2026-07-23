@@ -1,114 +1,119 @@
-import type { Building, Tile } from "../types";
+import type { Building, PlayerState, Well } from "../types";
 import {
-  PIPELINE_TRANSFER_BBL_PER_HOUR,
-  PUMPJACK_RATE_BBL_PER_HOUR,
+  FLARE_REP_PER_MCF,
+  GAS_SALE_REP_PER_MCF,
+  SPILL_CLEANUP_PER_BBL,
+  SPILL_REP_PER_BBL,
+  TANK_CAP_BBL,
 } from "../data/economy";
 
-function neighbors(b: Building, all: Building[]): Building[] {
-  return all.filter(
-    (o) =>
-      o.id !== b.id &&
-      Math.abs(o.x - b.x) + Math.abs(o.y - b.y) === 1,
+export interface ProdResult {
+  oilProduced: number;
+  gasProduced: number;
+  gasFlared: number;
+  gasSold: number;
+  spilled: number;
+  spillCleanup: number;
+  messages: string[];
+}
+
+function tankForWell(well: Well, buildings: Building[]): Building | undefined {
+  if (!well.tankId) return undefined;
+  return buildings.find((b) => b.id === well.tankId);
+}
+
+function hasGasLine(well: Well, buildings: Building[]): boolean {
+  return buildings.some(
+    (b) =>
+      b.kind === "gas_line" &&
+      b.online &&
+      Math.abs(b.x - well.x) + Math.abs(b.y - well.y) <= 2,
   );
 }
 
-function isConnectedToKind(
-  start: Building,
-  kind: Building["kind"],
-  all: Building[],
-): boolean {
-  const seen = new Set<string>();
-  const stack = [start];
-  while (stack.length) {
-    const cur = stack.pop()!;
-    if (seen.has(cur.id)) continue;
-    seen.add(cur.id);
-    if (cur.kind === kind) return true;
-    for (const n of neighbors(cur, all)) {
-      if (
-        n.kind === "pipeline" ||
-        n.kind === kind ||
-        n.kind === "tank" ||
-        n.kind === "pumpjack" ||
-        n.kind === "truck_rack"
-      ) {
-        stack.push(n);
-      }
-    }
-  }
-  return false;
-}
-
 /**
- * One simulation step. `dtHours` is simulated hours advanced this tick.
- * Returns barrels produced and sold this step.
+ * Advance producing wells by dtDays.
+ * Oil → tank (spill if over). Gas → flare or sell.
  */
-export function simulateStep(
-  tiles: Tile[][],
+export function simulateProduction(
+  wells: Well[],
   buildings: Building[],
-  dtHours: number,
-): { produced: number; transferred: number } {
-  let produced = 0;
-  let transferred = 0;
+  player: PlayerState,
+  gasPrice: number,
+  dtDays: number,
+): ProdResult {
+  const result: ProdResult = {
+    oilProduced: 0,
+    gasProduced: 0,
+    gasFlared: 0,
+    gasSold: 0,
+    spilled: 0,
+    spillCleanup: 0,
+    messages: [],
+  };
 
-  // Pumpjacks produce into themselves as a small buffer, then push via pipe
-  for (const jack of buildings) {
-    if (jack.kind !== "pumpjack" || !jack.online) continue;
-    const tile = tiles[jack.y]?.[jack.x];
-    if (!tile || tile.kind !== "oil_pad" || tile.oilReserve <= 0) {
-      jack.online = tile?.oilReserve === 0 ? false : jack.online;
+  for (const well of wells) {
+    if (well.status !== "producing") continue;
+
+    // Decline toward asymptotic low
+    const declineFactor = Math.exp(-well.declinePerDay * dtDays);
+    well.oilRate = Math.max(0.5, well.oilRate * declineFactor);
+    well.gasRate = Math.max(0, well.gasRate * declineFactor);
+    well.ageDays += dtDays;
+
+    if (well.oilRate < 1.2 && well.gasRate < 5) {
+      well.status = "shut_in";
+      result.messages.push(`Well ${well.id} declined to shut-in.`);
       continue;
     }
 
-    const connected = isConnectedToKind(jack, "tank", buildings);
-    if (!connected) continue;
+    const oil = well.oilRate * dtDays;
+    const gas = well.gasRate * dtDays;
+    result.oilProduced += oil;
+    result.gasProduced += gas;
 
-    const want = PUMPJACK_RATE_BBL_PER_HOUR * dtHours;
-    const got = Math.min(want, tile.oilReserve, jack.storageCap - jack.storage);
-    tile.oilReserve -= got;
-    jack.storage += got;
-    jack.runtimeHours += dtHours;
-    produced += got;
+    const tank = tankForWell(well, buildings);
+    if (tank && tank.online) {
+      const room = tank.oilCap - tank.oil;
+      const into = Math.min(oil, Math.max(0, room));
+      tank.oil += into;
+      const overflow = oil - into;
+      if (overflow > 0.5) {
+        result.spilled += overflow;
+        const cleanup = overflow * SPILL_CLEANUP_PER_BBL;
+        result.spillCleanup += cleanup;
+        player.cash -= cleanup;
+        player.reputation = Math.max(0, player.reputation - overflow * SPILL_REP_PER_BBL);
+        result.messages.push(
+          `Spill at tank (${overflow.toFixed(0)} bbl). Cleanup $${cleanup.toFixed(0)}.`,
+        );
+      }
+    }
+
+    if (gas > 0.01) {
+      if (hasGasLine(well, buildings)) {
+        const revenue = gas * gasPrice;
+        player.cash += revenue;
+        player.reputation = Math.min(
+          100,
+          player.reputation + gas * GAS_SALE_REP_PER_MCF,
+        );
+        result.gasSold += gas;
+      } else {
+        // Auto flare stack assumed at well
+        player.reputation = Math.max(
+          0,
+          player.reputation - gas * FLARE_REP_PER_MCF,
+        );
+        result.gasFlared += gas;
+      }
+    }
   }
 
-  // Pipelines / adjacency move oil toward tanks
-  for (const jack of buildings) {
-    if (jack.kind !== "pumpjack" || jack.storage <= 0) continue;
-    const tanks = buildings.filter(
-      (b) =>
-        b.kind === "tank" &&
-        b.storage < b.storageCap &&
-        isConnectedToKind(jack, "tank", buildings),
-    );
-    if (!tanks.length) continue;
-
-    const tank = tanks.sort((a, b) => a.storage - b.storage)[0];
-    const move = Math.min(
-      jack.storage,
-      tank.storageCap - tank.storage,
-      PIPELINE_TRANSFER_BBL_PER_HOUR * dtHours,
-    );
-    jack.storage -= move;
-    tank.storage += move;
-    transferred += move;
+  // Ensure tanks keep cap metadata
+  for (const b of buildings) {
+    if (b.kind === "tank" && b.oilCap <= 0) b.oilCap = TANK_CAP_BBL;
   }
 
-  return { produced, transferred };
-}
-
-export function findTruckRackSalesPath(
-  buildings: Building[],
-): { rack: Building; tank: Building } | null {
-  for (const rack of buildings) {
-    if (rack.kind !== "truck_rack") continue;
-    const tank = buildings.find(
-      (b) =>
-        b.kind === "tank" &&
-        b.storage > 0 &&
-        (Math.abs(b.x - rack.x) + Math.abs(b.y - rack.y) === 1 ||
-          isConnectedToKind(rack, "tank", buildings)),
-    );
-    if (tank) return { rack, tank };
-  }
-  return null;
+  return result;
 }
