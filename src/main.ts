@@ -1,4 +1,5 @@
 import "./styles.css";
+import { clampCamera, createCamera } from "./game/camera";
 import { Game } from "./game/Game";
 import {
   EXPLORE_COST,
@@ -28,6 +29,12 @@ app.innerHTML = `
   </header>
   <div class="stage-wrap">
     <canvas id="game-canvas"></canvas>
+    <div class="hover-tip" id="hover-tip"></div>
+    <div class="inspect-panel" id="inspect-panel">
+      <div class="inspect-title">Inspect</div>
+      <div id="inspect-body">Hover tiles · Right-click to pin · Scroll zoom · Drag pan (middle/right)</div>
+    </div>
+    <div class="help-chip">Scroll=zoom · Drag=pan · Right-click=inspect</div>
     <div class="toast" id="toast"></div>
   </div>
   <footer class="bottom-bar">
@@ -48,10 +55,19 @@ app.innerHTML = `
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
 const ctx = canvas.getContext("2d")!;
+const hoverTip = document.querySelector<HTMLDivElement>("#hover-tip")!;
+const inspectBody = document.querySelector<HTMLDivElement>("#inspect-body")!;
 const game = new Game();
+const cam = createCamera(game.config.cols, game.config.rows);
 let hover: { x: number; y: number } | null = null;
 let toastTimer = 0;
 let lastMsg = "";
+let pinnedInspect = "";
+
+let panning = false;
+let panButton = -1;
+let lastPanX = 0;
+let lastPanY = 0;
 
 function resize() {
   const wrap = canvas.parentElement!;
@@ -114,19 +130,101 @@ document.querySelectorAll(".tool-btn").forEach((btn) => {
   });
 });
 
-canvas.addEventListener("pointermove", (e) => {
-  hover = canvasToTile(canvas, game, e.clientX, e.clientY);
-});
-canvas.addEventListener("pointerleave", () => {
-  hover = null;
-});
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const before = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  cam.zoom *= factor;
+  clampCamera(cam, game.config.cols, game.config.rows);
+  // Keep cursor-anchored tile stable-ish
+  if (before) {
+    const after = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+    if (after) {
+      cam.x += before.x - after.x;
+      cam.y += before.y - after.y;
+      clampCamera(cam, game.config.cols, game.config.rows);
+    }
+  }
+}, { passive: false });
+
 canvas.addEventListener("pointerdown", (e) => {
-  const tile = canvasToTile(canvas, game, e.clientX, e.clientY);
+  // Middle mouse or right mouse = pan
+  if (e.button === 1 || e.button === 2) {
+    panning = true;
+    panButton = e.button;
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+    if (e.button === 2) {
+      const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+      if (tile) {
+        pinnedInspect = game.inspectAt(tile.x, tile.y);
+        inspectBody.textContent = pinnedInspect;
+        flash(pinnedInspect);
+      }
+    }
+    return;
+  }
+  if (e.button !== 0) return;
+  const tile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
   if (!tile) return;
   game.clickTile(tile.x, tile.y);
+  pinnedInspect = game.message;
+  inspectBody.textContent = pinnedInspect;
   flash(game.message);
   syncHud();
   syncMeta();
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (panning) {
+    const rect = canvas.getBoundingClientRect();
+    const canvasDx = (e.clientX - lastPanX) * (canvas.width / rect.width);
+    const canvasDy = (e.clientY - lastPanY) * (canvas.height / rect.height);
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    const tsize = game.config.tileSize * cam.zoom;
+    cam.x -= canvasDx / tsize;
+    cam.y -= canvasDy / tsize;
+    clampCamera(cam, game.config.cols, game.config.rows);
+    return;
+  }
+
+  hover = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+  if (hover) {
+    const text = game.inspectAt(hover.x, hover.y);
+    hoverTip.textContent = text;
+    hoverTip.style.display = "block";
+    const wrap = canvas.parentElement!.getBoundingClientRect();
+    hoverTip.style.left = `${Math.min(e.clientX - wrap.left + 14, wrap.width - 280)}px`;
+    hoverTip.style.top = `${Math.min(e.clientY - wrap.top + 14, wrap.height - 60)}px`;
+  } else {
+    hoverTip.style.display = "none";
+  }
+});
+
+canvas.addEventListener("pointerup", (e) => {
+  if (panning && e.button === panButton) {
+    panning = false;
+    panButton = -1;
+  }
+});
+canvas.addEventListener("pointerleave", () => {
+  hover = null;
+  hoverTip.style.display = "none";
+});
+
+window.addEventListener("keydown", (e) => {
+  const step = 1 / cam.zoom;
+  if (e.key === "w" || e.key === "ArrowUp") cam.y -= step;
+  if (e.key === "s" || e.key === "ArrowDown") cam.y += step;
+  if (e.key === "a" || e.key === "ArrowLeft") cam.x -= step;
+  if (e.key === "d" || e.key === "ArrowRight") cam.x += step;
+  if (e.key === "=" || e.key === "+") cam.zoom *= 1.1;
+  if (e.key === "-" || e.key === "_") cam.zoom *= 0.9;
+  clampCamera(cam, game.config.cols, game.config.rows);
 });
 
 function flash(msg: string) {
@@ -134,7 +232,7 @@ function flash(msg: string) {
   el.textContent = msg;
   el.classList.add("show");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.classList.remove("show"), 2400);
+  toastTimer = window.setTimeout(() => el.classList.remove("show"), 2800);
 }
 
 function money(n: number) {
@@ -154,9 +252,7 @@ function syncHud() {
     ? "var(--ok)"
     : "var(--danger)";
   document.querySelector("#stat-wx")!.textContent =
-    game.weather.kind === "clear"
-      ? "clear"
-      : `${game.weather.kind}`;
+    game.weather.kind === "clear" ? "clear" : `${game.weather.kind}`;
 }
 
 function syncMeta() {
@@ -168,7 +264,7 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   game.update(dt);
-  renderGame(ctx, game, hover);
+  renderGame(ctx, game, cam, hover);
   syncHud();
   if (game.message !== lastMsg) {
     lastMsg = game.message;
@@ -179,7 +275,5 @@ function frame(now: number) {
 
 syncHud();
 syncMeta();
-flash(
-  "$5M facility: connect pad → battery → refinery with roads, then drill. Get out of debt.",
-);
+flash("Scroll to zoom, drag with right/middle mouse to pan. Drill → tank fills → truck hauls.");
 requestAnimationFrame(frame);

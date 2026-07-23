@@ -1,3 +1,5 @@
+import type { Camera } from "./camera";
+import { worldToScreen } from "./camera";
 import type { Game } from "./Game";
 import type { Building, Tile, Unit, Well } from "./types";
 
@@ -13,7 +15,7 @@ const C = {
   zone1: "rgba(212, 160, 23, 0.16)",
   zone2: "rgba(196, 92, 38, 0.18)",
   zone3: "rgba(140, 60, 90, 0.2)",
-  special: "rgba(200, 80, 120, 0.35)",
+  special: "rgba(200, 80, 120, 0.2)",
   rig: "#d4a017",
   truck: "#8a9aaa",
   jack: "#c4a35a",
@@ -26,6 +28,7 @@ const C = {
   select: "#f0c040",
   spill: "rgba(40, 20, 8, 0.55)",
   storm: "rgba(40, 50, 70, 0.25)",
+  label: "#e8ece6",
 };
 
 function surfaceColor(tile: Tile, x: number, y: number): string {
@@ -61,6 +64,9 @@ function drawWell(
       -Math.PI / 2 + p * Math.PI * 2,
     );
     ctx.stroke();
+    ctx.fillStyle = C.label;
+    ctx.font = `${Math.max(10, Math.floor(size * 0.28))}px monospace`;
+    ctx.fillText(`${Math.floor(p * 100)}%`, px + size * 0.28, py + size * 0.55);
     return;
   }
   if (well.status === "duster") {
@@ -72,6 +78,9 @@ function drawWell(
     ctx.moveTo(px + size * 0.7, py + size * 0.3);
     ctx.lineTo(px + size * 0.3, py + size * 0.7);
     ctx.stroke();
+    ctx.fillStyle = "#b0a090";
+    ctx.font = `${Math.max(9, Math.floor(size * 0.22))}px monospace`;
+    ctx.fillText("DUSTER", px + 2, py + size - 4);
   }
 }
 
@@ -81,8 +90,9 @@ function drawBuilding(
   px: number,
   py: number,
   size: number,
+  well?: Well,
 ) {
-  const pad = size * 0.15;
+  const pad = size * 0.12;
   const s = size - pad * 2;
   ctx.save();
   ctx.translate(px + pad, py + pad);
@@ -98,37 +108,49 @@ function drawBuilding(
       ctx.moveTo(s * 0.15, s * 0.55);
       ctx.lineTo(s * 0.85, s * 0.2);
       ctx.stroke();
+      if (well && well.status === "producing") {
+        ctx.fillStyle = C.select;
+        ctx.font = `bold ${Math.max(10, Math.floor(size * 0.26))}px monospace`;
+        ctx.fillText(`${well.oilRate.toFixed(0)} bopd`, -pad + 2, -2);
+      }
       break;
     }
     case "wellhead_tank": {
-      ctx.fillStyle = C.tank;
-      ctx.beginPath();
-      ctx.ellipse(s * 0.5, s * 0.55, s * 0.32, s * 0.28, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillStyle = "#8a9aa2";
+      ctx.fillRect(s * 0.15, s * 0.2, s * 0.7, s * 0.65);
+      ctx.strokeStyle = "#c0d0d8";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(s * 0.15, s * 0.2, s * 0.7, s * 0.65);
       const fill = b.oilCap ? Math.min(1, b.oil / b.oilCap) : 0;
       ctx.fillStyle = "#1a1008";
-      ctx.beginPath();
-      ctx.ellipse(s * 0.5, s * 0.55, s * 0.32 * fill, s * 0.28 * fill, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(s * 0.2, s * 0.75 - s * 0.5 * fill, s * 0.6, s * 0.5 * fill);
+      ctx.fillStyle = C.select;
+      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.22))}px monospace`;
+      ctx.fillText("TANK", s * 0.22, s * 0.18);
+      ctx.fillStyle = C.label;
+      ctx.fillText(`${b.oil.toFixed(0)}`, s * 0.28, s * 0.55);
       break;
     }
     case "battery": {
       ctx.fillStyle = C.battery;
-      ctx.fillRect(s * 0.1, s * 0.25, s * 0.35, s * 0.55);
-      ctx.fillRect(s * 0.55, s * 0.25, s * 0.35, s * 0.55);
+      ctx.fillRect(s * 0.05, s * 0.2, s * 0.4, s * 0.6);
+      ctx.fillRect(s * 0.55, s * 0.2, s * 0.4, s * 0.6);
       const fill = b.oilCap ? Math.min(1, b.oil / b.oilCap) : 0;
       ctx.fillStyle = "#1a1008";
-      ctx.fillRect(s * 0.14, s * 0.7 - s * 0.4 * fill, s * 0.27, s * 0.4 * fill);
-      ctx.fillRect(s * 0.59, s * 0.7 - s * 0.4 * fill, s * 0.27, s * 0.4 * fill);
+      ctx.fillRect(s * 0.1, s * 0.7 - s * 0.45 * fill, s * 0.3, s * 0.45 * fill);
+      ctx.fillRect(s * 0.6, s * 0.7 - s * 0.45 * fill, s * 0.3, s * 0.45 * fill);
+      ctx.fillStyle = C.select;
+      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
+      ctx.fillText("BATTERY", 0, s * 0.14);
       break;
     }
     case "gas_flare": {
       if (!b.online) break;
       ctx.fillStyle = C.flare;
       ctx.beginPath();
-      ctx.moveTo(s * 0.5, s * 0.1);
-      ctx.lineTo(s * 0.65, s * 0.45);
-      ctx.lineTo(s * 0.35, s * 0.45);
+      ctx.moveTo(s * 0.5, s * 0.05);
+      ctx.lineTo(s * 0.7, s * 0.45);
+      ctx.lineTo(s * 0.3, s * 0.45);
       ctx.closePath();
       ctx.fill();
       break;
@@ -145,6 +167,9 @@ function drawBuilding(
       ctx.fillStyle = "#3a3028";
       ctx.fillRect(s * 0.2, s * 0.05, s * 0.15, s * 0.25);
       ctx.fillRect(s * 0.55, s * 0.0, s * 0.18, s * 0.3);
+      ctx.fillStyle = C.select;
+      ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
+      ctx.fillText("REFINERY", 0, s * 0.95);
       break;
     }
   }
@@ -154,13 +179,11 @@ function drawBuilding(
 function drawUnit(
   ctx: CanvasRenderingContext2D,
   u: Unit,
-  ox: number,
-  oy: number,
+  px: number,
+  py: number,
   size: number,
   selected: boolean,
 ) {
-  const px = ox + u.x * size;
-  const py = oy + u.y * size;
   ctx.save();
   if (u.kind === "drill_rig") {
     ctx.fillStyle = C.rig;
@@ -172,6 +195,9 @@ function drawUnit(
   } else {
     ctx.fillStyle = C.truck;
     ctx.fillRect(px + size * 0.15, py + size * 0.3, size * 0.7, size * 0.4);
+    ctx.fillStyle = C.select;
+    ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
+    ctx.fillText("TRUCK", px + size * 0.18, py + size * 0.25);
     if (u.cargo > 0) {
       ctx.fillStyle = "#1a1008";
       ctx.fillRect(
@@ -193,49 +219,66 @@ function drawUnit(
 export function renderGame(
   ctx: CanvasRenderingContext2D,
   game: Game,
+  cam: Camera,
   hover: { x: number; y: number } | null,
 ) {
   const { cols, rows, tileSize } = game.config;
-  const w = cols * tileSize;
-  const h = rows * tileSize;
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  const ox = Math.floor((ctx.canvas.width - w) / 2);
-  const oy = Math.floor((ctx.canvas.height - h) / 2);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const tile = game.tiles[y][x];
-      const px = ox + x * tileSize;
-      const py = oy + y * tileSize;
+      const { sx: px, sy: py, size } = worldToScreen(
+        cam,
+        ctx.canvas.width,
+        ctx.canvas.height,
+        tileSize,
+        x,
+        y,
+      );
+      if (px + size < 0 || py + size < 0 || px > ctx.canvas.width || py > ctx.canvas.height) {
+        continue;
+      }
       ctx.fillStyle = surfaceColor(tile, x, y);
-      ctx.fillRect(px, py, tileSize, tileSize);
+      ctx.fillRect(px, py, size, size);
 
       if (tile.hasRoad) {
         ctx.strokeStyle = C.roadEdge;
         ctx.lineWidth = 1;
-        ctx.strokeRect(px + 4, py + 4, tileSize - 8, tileSize - 8);
+        ctx.strokeRect(px + 3, py + 3, size - 6, size - 6);
+      }
+      if (tile.isPad && !tile.hasRoad) {
+        ctx.strokeStyle = "#6a8058";
+        ctx.strokeRect(px + 2, py + 2, size - 4, size - 4);
       }
 
       const zo = zoneOverlay(tile);
       if (zo) {
         ctx.fillStyle = zo;
-        ctx.fillRect(px, py, tileSize, tileSize);
+        ctx.fillRect(px, py, size, size);
       }
 
       ctx.strokeStyle = C.grid;
       ctx.lineWidth = 1;
-      ctx.strokeRect(px + 0.5, py + 0.5, tileSize - 1, tileSize - 1);
+      ctx.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
     }
   }
 
   for (const s of game.spills) {
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      s.x,
+      s.y,
+    );
     ctx.fillStyle = C.spill;
     ctx.beginPath();
     ctx.arc(
-      ox + (s.x + 0.5) * tileSize,
-      oy + (s.y + 0.5) * tileSize,
-      tileSize * (0.25 + Math.min(0.4, s.barrels / 80)),
+      sx + size / 2,
+      sy + size / 2,
+      size * (0.25 + Math.min(0.4, s.barrels / 80)),
       0,
       Math.PI * 2,
     );
@@ -244,53 +287,77 @@ export function renderGame(
 
   for (const b of game.buildings) {
     if (b.kind === "gas_flare") continue;
-    drawBuilding(ctx, b, ox + b.x * tileSize, oy + b.y * tileSize, tileSize);
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      b.x,
+      b.y,
+    );
+    const well = b.wellId ? game.wells.find((w) => w.id === b.wellId) : undefined;
+    drawBuilding(ctx, b, sx, sy, size, well);
   }
   for (const well of game.wells) {
-    drawWell(ctx, well, ox + well.x * tileSize, oy + well.y * tileSize, tileSize);
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      well.x,
+      well.y,
+    );
+    drawWell(ctx, well, sx, sy, size);
   }
   for (const b of game.buildings) {
-    if (b.kind === "gas_flare") {
-      drawBuilding(ctx, b, ox + b.x * tileSize, oy + b.y * tileSize, tileSize);
-    }
+    if (b.kind !== "gas_flare") continue;
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      b.x,
+      b.y,
+    );
+    drawBuilding(ctx, b, sx, sy, size);
   }
 
   for (const u of game.units) {
-    drawUnit(ctx, u, ox, oy, tileSize, u.id === game.selectedUnitId);
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      u.x,
+      u.y,
+    );
+    drawUnit(ctx, u, sx, sy, size, u.id === game.selectedUnitId);
   }
 
   if (hover) {
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      hover.x,
+      hover.y,
+    );
     ctx.strokeStyle = C.select;
     ctx.lineWidth = 2;
-    ctx.strokeRect(
-      ox + hover.x * tileSize + 1,
-      oy + hover.y * tileSize + 1,
-      tileSize - 2,
-      tileSize - 2,
-    );
+    ctx.strokeRect(sx + 1, sy + 1, size - 2, size - 2);
   }
 
   if (game.weather.kind !== "clear") {
     ctx.fillStyle = C.storm;
-    ctx.fillRect(ox, oy, w, h);
-    if (game.weather.kind === "lightning_cell" && Math.random() < 0.04) {
-      ctx.strokeStyle = "rgba(220, 230, 255, 0.7)";
-      ctx.lineWidth = 2;
-      const lx = ox + Math.random() * w;
-      ctx.beginPath();
-      ctx.moveTo(lx, oy);
-      ctx.lineTo(lx + (Math.random() - 0.5) * 40, oy + h * 0.4);
-      ctx.lineTo(lx + (Math.random() - 0.5) * 60, oy + h);
-      ctx.stroke();
-    }
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   }
-
-  return { ox, oy };
 }
 
 export function canvasToTile(
   canvas: HTMLCanvasElement,
   game: Game,
+  cam: Camera,
   clientX: number,
   clientY: number,
 ): { x: number; y: number } | null {
@@ -299,13 +366,9 @@ export function canvasToTile(
   const scaleY = canvas.height / rect.height;
   const mx = (clientX - rect.left) * scaleX;
   const my = (clientY - rect.top) * scaleY;
-  const { cols, rows, tileSize } = game.config;
-  const w = cols * tileSize;
-  const h = rows * tileSize;
-  const ox = Math.floor((canvas.width - w) / 2);
-  const oy = Math.floor((canvas.height - h) / 2);
-  const x = Math.floor((mx - ox) / tileSize);
-  const y = Math.floor((my - oy) / tileSize);
-  if (x < 0 || y < 0 || x >= cols || y >= rows) return null;
+  const size = game.config.tileSize * cam.zoom;
+  const x = Math.floor(cam.x + (mx - canvas.width / 2) / size);
+  const y = Math.floor(cam.y + (my - canvas.height / 2) / size);
+  if (x < 0 || y < 0 || x >= game.config.cols || y >= game.config.rows) return null;
   return { x, y };
 }

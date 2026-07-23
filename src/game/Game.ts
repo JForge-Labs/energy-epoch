@@ -265,6 +265,8 @@ export class Game {
       [1, -1],
       [-1, -1],
     ];
+    // Prefer tiles already on the road network so trucks can reach the tank
+    const candidates: { x: number; y: number; score: number }[] = [];
     for (const [dx, dy] of dirs) {
       const nx = x + dx;
       const ny = y + dy;
@@ -273,9 +275,78 @@ export class Game {
       }
       if (this.buildingAt(nx, ny)) continue;
       if (this.tiles[ny][nx].drilled) continue;
-      return { x: nx, y: ny };
+      let score = 0;
+      if (this.tiles[ny][nx].hasRoad) score += 10;
+      if (this.tiles[ny][nx].isPad) score += 5;
+      // Cardinal neighbors first
+      if (Math.abs(dx) + Math.abs(dy) === 1) score += 2;
+      candidates.push({ x: nx, y: ny, score });
     }
-    return null;
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] ? { x: candidates[0].x, y: candidates[0].y } : null;
+  }
+
+  /** Lay free spur roads from a tile to the nearest existing road (max 12 steps) */
+  private linkToRoadNetwork(sx: number, sy: number) {
+    this.tiles[sy][sx].hasRoad = true;
+    if (this.truckPassable(sx, sy) && this.hasRoadAccess(sx, sy)) return;
+
+    const key = (x: number, y: number) => `${x},${y}`;
+    const q: { x: number; y: number }[] = [{ x: sx, y: sy }];
+    const came = new Map<string, string | null>();
+    came.set(key(sx, sy), null);
+    let found: { x: number; y: number } | null = null;
+
+    while (q.length && !found) {
+      const cur = q.shift()!;
+      if (!(cur.x === sx && cur.y === sy) && this.tiles[cur.y][cur.x].hasRoad) {
+        found = cur;
+        break;
+      }
+      if (came.size > 80) break;
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nx = cur.x + dx;
+        const ny = cur.y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.config.cols || ny >= this.config.rows) {
+          continue;
+        }
+        const k = key(nx, ny);
+        if (came.has(k)) continue;
+        if (this.buildingAt(nx, ny)?.kind === "pumpjack") continue;
+        came.set(k, key(cur.x, cur.y));
+        q.push({ x: nx, y: ny });
+      }
+    }
+
+    if (!found) return;
+    let walk: string | null = key(found.x, found.y);
+    while (walk) {
+      const [xs, ys] = walk.split(",");
+      const x = Number(xs);
+      const y = Number(ys);
+      this.tiles[y][x].hasRoad = true;
+      walk = came.get(walk) ?? null;
+    }
+  }
+
+  private hasRoadAccess(x: number, y: number): boolean {
+    // Connected via roads to battery or refinery?
+    const battery = this.buildings.find((b) => b.kind === "battery");
+    if (!battery) return this.tiles[y][x].hasRoad;
+    const path = findPath(
+      this.tiles,
+      new Set(),
+      { x, y },
+      { x: battery.x, y: battery.y },
+      "road",
+      this.truckPassable,
+    );
+    return path.length > 0 || (x === battery.x && y === battery.y);
   }
 
   private nudgeRigOffHole(rig: Unit, x: number, y: number) {
@@ -426,8 +497,38 @@ export class Game {
     this.buildings.push(jack);
     well.pumpjackId = jack.id;
 
-    const spot = this.freeNeighbor(well.x, well.y);
+    // Guarantee a wellhead tank beside the jack
+    let spot = this.freeNeighbor(well.x, well.y);
+    if (!spot) {
+      // Force: pick first in-bounds cardinal neighbor and clear soft blockers
+      const forced = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ];
+      for (const [dx, dy] of forced) {
+        const nx = well.x + dx;
+        const ny = well.y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.config.cols || ny >= this.config.rows) {
+          continue;
+        }
+        if (this.buildingAt(nx, ny)?.kind === "refinery") continue;
+        spot = { x: nx, y: ny };
+        break;
+      }
+    }
     if (spot) {
+      // Remove non-critical occupancy on the spot
+      this.buildings = this.buildings.filter(
+        (b) =>
+          !(
+            b.x === spot!.x &&
+            b.y === spot!.y &&
+            b.kind !== "battery" &&
+            b.kind !== "refinery"
+          ),
+      );
       const tank: Building = {
         id: uid("wt"),
         kind: "wellhead_tank",
@@ -441,8 +542,8 @@ export class Game {
       };
       this.buildings.push(tank);
       well.wellheadTankId = tank.id;
-      // Auto-road the wellhead tile so trucks can dock once connected
-      this.tiles[spot.y][spot.x].hasRoad = true;
+      this.tiles[well.y][well.x].hasRoad = true;
+      this.linkToRoadNetwork(spot.x, spot.y);
     }
 
     this.buildings.push({
@@ -457,7 +558,7 @@ export class Game {
       hp: 50,
     });
 
-    this.message = `Ripper! ${well.oilRate.toFixed(0)} bopd · ${well.gasRate.toFixed(0)} mcf/d. Road it to the battery.`;
+    this.message = `Ripper! ${well.oilRate.toFixed(0)} bopd · ${well.gasRate.toFixed(0)} mcf/d. Tank filling — truck will haul to battery.`;
   }
 
   buyExploration(cx: number, cy: number): boolean {
@@ -636,41 +737,78 @@ export class Game {
       return;
     }
 
+    this.message = this.inspectAt(x, y);
+  }
+
+  /** Hover / right-click / select inspect text */
+  inspectAt(x: number, y: number): string {
+    if (x < 0 || y < 0 || x >= this.config.cols || y >= this.config.rows) {
+      return "";
+    }
+
     const unit = this.units.find(
       (u) => Math.round(u.x) === x && Math.round(u.y) === y,
     );
     if (unit) {
       this.selectedUnitId = unit.id;
-      this.message =
-        unit.kind === "drill_rig"
-          ? `Drill rig T${unit.tier}${unit.busy ? " (drilling)" : ""}`
-          : `Truck · ${unit.cargo.toFixed(0)}/${unit.cargoCap} · ${unit.job}`;
-      return;
+      if (unit.kind === "drill_rig") {
+        return `Drill rig tier ${unit.tier}${unit.busy ? " · DRILLING" : " · idle"} — Move rig, then Drill.`;
+      }
+      return `Truck · cargo ${unit.cargo.toFixed(0)}/${unit.cargoCap} bbl · job: ${unit.job}`;
     }
+
     const well = this.wellAt(x, y);
     if (well) {
-      this.message = `Well ${well.status} · ${well.oilRate.toFixed(1)} bopd · ${well.gasRate.toFixed(1)} mcf/d`;
-      return;
+      if (well.status === "drilling") {
+        const pct = Math.min(100, (well.drillProgress / well.drillDaysNeeded) * 100);
+        return `Drilling… ${pct.toFixed(0)}% complete`;
+      }
+      if (well.status === "duster") return "Dry hole (duster). No production.";
+      if (well.status === "shut_in") return "Well shut-in — declined out.";
+      const tank = well.wellheadTankId
+        ? this.buildings.find((b) => b.id === well.wellheadTankId)
+        : undefined;
+      const tankLine = tank
+        ? `Wellhead tank ${tank.oil.toFixed(1)}/${tank.oilCap} bbl`
+        : "No tank (bug)";
+      return `Producing well · ${well.oilRate.toFixed(1)} bopd · ${well.gasRate.toFixed(1)} mcf/d · ${tankLine}`;
     }
+
     const b = this.buildingAt(x, y);
     if (b) {
-      if (b.kind === "battery" || b.kind === "wellhead_tank") {
-        this.message = `${b.kind} ${b.oil.toFixed(0)}/${b.oilCap} bbl`;
-      } else if (b.kind === "refinery") {
-        this.message = `Refinery slot ${b.throughputUsed?.toFixed(0)}/${b.throughputCap} bbl today`;
-      } else {
-        this.message = `${b.kind}`;
+      if (b.kind === "wellhead_tank") {
+        const fill = b.oilCap ? ((b.oil / b.oilCap) * 100).toFixed(0) : "0";
+        return `Wellhead tank · ${b.oil.toFixed(1)}/${b.oilCap} bbl (${fill}% full) — truck hauls to battery`;
       }
-      return;
+      if (b.kind === "battery") {
+        const fill = b.oilCap ? ((b.oil / b.oilCap) * 100).toFixed(0) : "0";
+        return `Tank battery · ${b.oil.toFixed(0)}/${b.oilCap} bbl (${fill}%) — trucks haul to refinery`;
+      }
+      if (b.kind === "refinery") {
+        return `Refinery slot · ${b.throughputUsed?.toFixed(0) ?? 0}/${b.throughputCap} bbl today @ $${this.market.oilPrice.toFixed(2)}`;
+      }
+      if (b.kind === "pumpjack") {
+        const w = this.wells.find((w) => w.id === b.wellId);
+        if (w && w.status === "producing") {
+          return `Pumpjack online · ${w.oilRate.toFixed(1)} bopd flowing to wellhead tank`;
+        }
+        return "Pumpjack";
+      }
+      if (b.kind === "gas_line") return "Gas takeaway — sales on, flare off nearby";
+      return b.kind;
     }
+
     const tile = this.tiles[y][x];
+    const bits: string[] = [];
+    if (tile.isPad) bits.push("company pad");
+    if (tile.hasRoad) bits.push("road");
     if (tile.surveyed) {
-      this.message = `Zone ${tile.subsurface.zone}${tile.subsurface.special ? " SPECIAL" : ""}${tile.hasRoad ? " · road" : ""}`;
-    } else if (tile.isPad) {
-      this.message = "Company well pad — wildcat here first.";
+      bits.push(`zone ${tile.subsurface.zone}`);
+      if (tile.subsurface.special) bits.push("SPECIAL (permit)");
     } else {
-      this.message = `${tile.hasRoad ? "Road" : "Ground"} ${x},${y}`;
+      bits.push("unexplored");
     }
+    return bits.join(" · ") + ` · ${x},${y}`;
   }
 
   private moveUnits(dtHours: number) {
@@ -842,18 +980,27 @@ export class Game {
         }
       }
 
-      // Pickup wellhead tanks
+      // Pickup wellhead tanks — haul as soon as a few barrels accumulate
       if (truck.cargo < 1) {
         const tanks = this.buildings
           .filter(
             (b) =>
               b.kind === "wellhead_tank" &&
               b.online &&
-              b.oil >= Math.min(25, b.oilCap * 0.3),
+              b.oil >= 3,
           )
           .sort((a, b) => b.oil / b.oilCap - a.oil / a.oilCap);
         const tank = tanks[0];
-        if (!tank) continue;
+        if (!tank) {
+          // Nothing to haul yet — if producing wells exist, explain
+          const waiting = this.buildings.find(
+            (b) => b.kind === "wellhead_tank" && b.oil > 0 && b.oil < 3,
+          );
+          if (waiting && truck.job === "idle") {
+            // stay quiet; oil still accumulating
+          }
+          continue;
+        }
 
         if (Math.round(truck.x) === tank.x && Math.round(truck.y) === tank.y) {
           const load = Math.min(truck.cargoCap, tank.oil);
@@ -861,6 +1008,7 @@ export class Game {
           truck.cargo = load;
           truck.job = "to_battery";
           truck.targetBuildingId = battery.id;
+          this.message = `Truck loaded ${load.toFixed(0)} bbl at wellhead → battery.`;
           continue;
         }
 
@@ -870,8 +1018,21 @@ export class Game {
           truck.busy = true;
           truck.job = "to_pickup";
           truck.targetBuildingId = tank.id;
-        } else if (tanks.length) {
-          // Keep quiet unless player is looking — message when stuck globally
+          this.message = "Truck en route to wellhead tank.";
+        } else {
+          // Try auto-link then path again
+          this.linkToRoadNetwork(tank.x, tank.y);
+          const retry = this.roadPath(truck, { x: tank.x, y: tank.y });
+          if (retry.length) {
+            truck.path = retry;
+            truck.busy = true;
+            truck.job = "to_pickup";
+            truck.targetBuildingId = tank.id;
+            this.message = "Spur road linked — truck heading to wellhead.";
+          } else {
+            this.message =
+              "Truck can't reach wellhead — build a continuous road to the battery.";
+          }
         }
       }
     }
