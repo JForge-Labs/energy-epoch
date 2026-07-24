@@ -172,6 +172,8 @@ export class Game {
   private pipesDirty = true;
   /** Player time-of-day speed multiplier (0 = paused). */
   timeScale = 1;
+  /** When false, debt interest does not accrue (sandbox toggle). */
+  interestEnabled = true;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -305,7 +307,8 @@ export class Game {
       add_tank: "Click a wellhead tank to add crude storage — fewer overflows between hauls.",
       sell: "Scrap a road, pipe, gas line, plant, battery, refinery, or truck — 75%.",
       choke: "Click a well to shut it in / bring it back — throttle inflow.",
-      truck: "Buy another truck.",
+      truck: "Buy a 400 bbl haul truck.",
+      small_truck: "Buy a cheaper 200 bbl haul truck.",
       gas_line: "Gas takeaway near a well — stop flare, sell gas.",
       explore: "Survey a 3×3 (9 tiles). Colors show strike odds — drill Good/Sweet.",
       upgrade_rig: "Higher tier → deeper zones.",
@@ -1321,15 +1324,15 @@ export class Game {
     return true;
   }
 
-  buyTruck(): boolean {
-    if (this.player.cash < EXTRA_TRUCK_COST) {
-      this.message = `Truck costs $${EXTRA_TRUCK_COST.toLocaleString()}.`;
+  buyTruck(cap: number = TRUCK_CAP_BBL, cost: number = EXTRA_TRUCK_COST): boolean {
+    if (this.player.cash < cost) {
+      this.message = `Truck costs $${cost.toLocaleString()}.`;
       return false;
     }
     const batt = this.buildings.find((b) => b.kind === "battery")!;
-    this.player.cash -= EXTRA_TRUCK_COST;
-    this.player.opexToday += EXTRA_TRUCK_COST;
-    this.ledger.push(this.market.day, "capex", "Truck purchase", -EXTRA_TRUCK_COST);
+    this.player.cash -= cost;
+    this.player.opexToday += cost;
+    this.ledger.push(this.market.day, "capex", `Truck (${cap} bbl)`, -cost);
     this.units.push({
       id: uid("trk"),
       kind: "truck",
@@ -1337,7 +1340,7 @@ export class Game {
       y: batt.y,
       path: [],
       cargo: 0,
-      cargoCap: TRUCK_CAP_BBL,
+      cargoCap: cap,
       cargoKind: "none",
       busy: false,
       targetWellId: null,
@@ -1345,7 +1348,7 @@ export class Game {
       job: "idle",
       tier: 0,
     });
-    this.message = "Truck added.";
+    this.message = `${cap} bbl truck added.`;
     return true;
   }
 
@@ -1684,21 +1687,21 @@ export class Game {
     // fill. BUT a tank whose well has stopped filling (shut-in / choked / gone)
     // is hauled on any residual, so end-of-life crude is never stranded.
     // Crude-piped tanks are left to the pipe unless they climb past 0.7.
-    const crudeReady = (t: Building) =>
-      t.oil >= Math.min(TRUCK_CAP_BBL, Math.max(1, t.oilCap)) * CRUDE_LOAD_READY_FRAC;
+    const crudeReady = (t: Building, cap: number) =>
+      t.oil >= Math.min(cap, Math.max(1, t.oilCap)) * CRUDE_LOAD_READY_FRAC;
     const tankStillFilling = (t: Building) => {
       const w = t.wellId ? this.wells.find((x) => x.id === t.wellId) : undefined;
       return !!w && w.status === "producing" && !w.choked;
     };
-    const haulReady = (t: Building) =>
-      t.oil >= 2 && (crudeReady(t) || !tankStillFilling(t));
-    const readyWellheads = () =>
+    const haulReady = (t: Building, cap: number) =>
+      t.oil >= 2 && (crudeReady(t, cap) || !tankStillFilling(t));
+    const readyWellheads = (cap: number) =>
       this.buildings
         .filter(
           (b) =>
             b.kind === "wellhead_tank" &&
             b.online &&
-            haulReady(b) &&
+            haulReady(b, cap) &&
             (!this.crudeTankLinks.has(b.id) || b.oil / Math.max(1, b.oilCap) >= 0.7),
         )
         .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap));
@@ -1783,7 +1786,7 @@ export class Game {
       // --- Load clean at the battery we're standing on ---
       const batLoad = truck.cargo < 1 ? batteryAt(truck) : undefined;
       if (batLoad && batLoad.clean >= 5) {
-        const urgent = readyWellheads()[0];
+        const urgent = readyWellheads(truck.cargoCap)[0];
         const cleanReady =
           batLoad.clean >= truck.cargoCap - 0.5 || batLoad.crude < CLEAN_DRAIN_MIN_BBL;
         if ((!urgent || batLoad.crude >= batLoad.crudeCap * 0.9) && cleanReady) {
@@ -1807,7 +1810,7 @@ export class Game {
       if (truck.cargo < 1) {
         const tank = this.buildings.find(
           (b) =>
-            b.kind === "wellhead_tank" && at(truck, b.x, b.y) && haulReady(b),
+            b.kind === "wellhead_tank" && at(truck, b.x, b.y) && haulReady(b, truck.cargoCap),
         );
         if (tank) {
           const load = Math.min(truck.cargoCap, tank.oil);
@@ -1845,7 +1848,7 @@ export class Game {
       }
 
       // --- Empty truck: pick next job (continuous loop) ---
-      const readyTanks = readyWellheads();
+      const readyTanks = readyWellheads(truck.cargoCap);
       const tank = readyTanks[0];
       const wellFill = tank ? tank.oil / Math.max(1, tank.oilCap) : 0;
       const roomBats = battWithCrudeRoom();
@@ -2265,7 +2268,8 @@ export class Game {
         kind: t.cargoKind,
       })),
       stranded: stranded.length,
-      interestPerDay: interestDay,
+      interestPerDay: this.interestEnabled ? interestDay : 0,
+      interestOn: this.interestEnabled,
       interestToday: this.player.credit.interestPaidToday,
       revenueToday: this.player.revenueToday,
       opexToday: this.player.opexToday,
@@ -2410,7 +2414,9 @@ export class Game {
       this.weather = tickWeather(this.weather, dtHours);
       this.market = tickMarket(this.market, dtDays);
 
-      const interest = accrueInterest(this.player, dtDays);
+      const interest = this.interestEnabled
+        ? accrueInterest(this.player, dtDays)
+        : 0;
       this.interestBucket += interest;
       if (this.interestBucket >= 500) {
         this.ledger.push(

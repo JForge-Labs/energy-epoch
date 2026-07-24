@@ -14,6 +14,8 @@ import {
   PERMIT_COST,
   REFINERY_COST,
   ROAD_COST,
+  SMALL_TRUCK_CAP_BBL,
+  SMALL_TRUCK_COST,
   UPGRADE_RIG_COST,
   WELLHEAD_TANK_ADD_BBL,
 } from "./game/data/economy";
@@ -32,6 +34,7 @@ const COST: Partial<Record<BuildTool, number>> = {
   battery: BATTERY_COST,
   refinery: REFINERY_COST,
   add_tank: ADD_TANK_COST,
+  small_truck: SMALL_TRUCK_COST,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -42,7 +45,7 @@ app.innerHTML = `
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
       <div>Debt <strong id="stat-debt">$0</strong></div>
-      <div title="Interest accrues daily against debt">Int/day <strong id="stat-int">$0</strong></div>
+      <div id="int-wrap" class="clickable" title="Click to toggle interest on/off">Int/day <strong id="stat-int">$0</strong></div>
       <div id="rep-wrap" class="clickable" title="Click for rep status">Rep <strong id="stat-rep">70</strong></div>
       <div>Oil <strong id="stat-oil">$0</strong></div>
       <div>Day <strong id="stat-day">1</strong></div>
@@ -56,6 +59,9 @@ app.innerHTML = `
       </div>
     </div>
     <div class="hud-actions">
+      <select id="profile-select" class="profile-select" title="Save profile"></select>
+      <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
+      <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
       <button type="button" class="tool-btn" id="btn-home">Home</button>
       <button type="button" class="tool-btn" id="btn-reset">Reset lease</button>
     </div>
@@ -104,7 +110,8 @@ app.innerHTML = `
     <button class="tool-btn" data-tool="drill" type="button">Drill</button>
     <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="truck" type="button">Truck · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="truck" type="button">Truck 400 · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+    <button class="tool-btn" data-tool="small_truck" type="button">Truck 200 · $${(SMALL_TRUCK_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
     <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
@@ -204,17 +211,61 @@ function disarmToSelect() {
   setActiveTool("select");
 }
 
-const SAVE_KEY = "energy-epoch-save";
+const SAVE_PREFIX = "energy-epoch-save";
+const PROFILES_KEY = "energy-epoch-profiles";
 // Bump on state-schema changes: 2 footprints, 3 terrain+pipes, 4 map 56×36.
 const SAVE_VERSION = 4;
 
 let currentSpeed = 1;
 
+// --- Save profiles: multiple named leases, each with its own autosave slot ---
+type ProfilesReg = { active: string; names: string[] };
+function loadProfiles(): ProfilesReg {
+  try {
+    const raw = localStorage.getItem(PROFILES_KEY);
+    if (raw) {
+      const r = JSON.parse(raw);
+      if (r && typeof r.active === "string" && Array.isArray(r.names) && r.names.length) {
+        return r;
+      }
+    }
+  } catch {
+    /* fall through to default + migration */
+  }
+  // Migrate a pre-profiles single save into a "Main" profile.
+  try {
+    const legacy = localStorage.getItem(SAVE_PREFIX);
+    if (legacy) {
+      localStorage.setItem(`${SAVE_PREFIX}:Main`, legacy);
+      localStorage.removeItem(SAVE_PREFIX);
+    }
+  } catch {
+    /* ignore */
+  }
+  return { active: "Main", names: ["Main"] };
+}
+let profiles = loadProfiles();
+function saveProfiles() {
+  try {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  } catch {
+    /* non-fatal */
+  }
+}
+saveProfiles();
+const activeSaveKey = () => `${SAVE_PREFIX}:${profiles.active}`;
+
 function saveGame() {
   try {
     localStorage.setItem(
-      SAVE_KEY,
-      JSON.stringify({ v: SAVE_VERSION, cam, spd: currentSpeed, game: game.serialize() }),
+      activeSaveKey(),
+      JSON.stringify({
+        v: SAVE_VERSION,
+        cam,
+        spd: currentSpeed,
+        intOn: game.interestEnabled,
+        game: game.serialize(),
+      }),
     );
   } catch {
     // storage full / unavailable — non-fatal, game keeps running in memory
@@ -223,7 +274,7 @@ function saveGame() {
 
 function loadGame(): boolean {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(activeSaveKey());
     if (!raw) return false;
     const snap = JSON.parse(raw);
     if (snap.v !== SAVE_VERSION || !snap.game) return false;
@@ -246,6 +297,7 @@ function loadGame(): boolean {
     }
     // Restore speed, but never load into a frozen (paused) sim.
     if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
+    if (typeof snap.intOn === "boolean") game.interestEnabled = snap.intOn;
     return true;
   } catch {
     return false;
@@ -260,8 +312,8 @@ function setSpeed(s: number) {
   });
 }
 
-function resetLease() {
-  localStorage.removeItem(SAVE_KEY);
+// Construct a fresh Game, optionally restoring the active profile's save.
+function bootGame(restore: boolean): boolean {
   game = new Game();
   game.timeScale = currentSpeed;
   cam = createCamera(game.config.cols, game.config.rows);
@@ -270,9 +322,71 @@ function resetLease() {
   gameoverEl.hidden = true;
   pinnedInspect = "";
   inspectBody.textContent = "Hover tiles · Right-click for actions";
-  flash("Lease reset. Build cardinal roads pad→battery→refinery, then drill.");
+  const restored = restore ? loadGame() : false;
   syncAll();
+  return restored;
+}
+
+function resetLease() {
+  localStorage.removeItem(activeSaveKey());
+  bootGame(false);
+  flash("Lease reset. Build cardinal roads pad→battery→refinery, then drill.");
   saveGame();
+}
+
+function refreshProfileUI() {
+  const sel = document.querySelector<HTMLSelectElement>("#profile-select");
+  if (!sel) return;
+  sel.innerHTML = profiles.names
+    .map(
+      (n) =>
+        `<option value="${n}"${n === profiles.active ? " selected" : ""}>${n}</option>`,
+    )
+    .join("");
+}
+
+function switchProfile(name: string) {
+  if (name === profiles.active || !profiles.names.includes(name)) return;
+  saveGame(); // persist the current profile first
+  profiles.active = name;
+  saveProfiles();
+  bootGame(true);
+  flash(`Switched to profile "${name}".`);
+  refreshProfileUI();
+}
+
+function newProfile() {
+  const raw = window.prompt("New profile name:", `Lease ${profiles.names.length + 1}`);
+  const name = raw?.trim();
+  if (!name) return;
+  if (profiles.names.includes(name)) {
+    switchProfile(name);
+    return;
+  }
+  saveGame(); // persist current before creating the new one
+  profiles.names.push(name);
+  profiles.active = name;
+  saveProfiles();
+  bootGame(false);
+  saveGame();
+  flash(`Created profile "${name}".`);
+  refreshProfileUI();
+}
+
+function deleteProfile() {
+  if (profiles.names.length <= 1) {
+    flash("Keep at least one profile.");
+    return;
+  }
+  const name = profiles.active;
+  if (!window.confirm(`Delete profile "${name}"? Its save is erased.`)) return;
+  localStorage.removeItem(activeSaveKey());
+  profiles.names = profiles.names.filter((n) => n !== name);
+  profiles.active = profiles.names[0];
+  saveProfiles();
+  bootGame(true);
+  flash(`Deleted "${name}". Now on "${profiles.active}".`);
+  refreshProfileUI();
 }
 
 document.querySelector("#btn-home")!.addEventListener("click", () => {
@@ -284,6 +398,12 @@ document.querySelector("#btn-home")!.addEventListener("click", () => {
 });
 document.querySelector("#btn-reset")!.addEventListener("click", resetLease);
 document.querySelector("#btn-reset-go")!.addEventListener("click", resetLease);
+
+document.querySelector("#profile-select")!.addEventListener("change", (e) => {
+  switchProfile((e.target as HTMLSelectElement).value);
+});
+document.querySelector("#btn-new-profile")!.addEventListener("click", newProfile);
+document.querySelector("#btn-del-profile")!.addEventListener("click", deleteProfile);
 
 document.querySelectorAll(".spd-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -343,6 +463,12 @@ document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   pinnedInspect = game.opsReason;
   inspectBody.textContent = game.opsReason;
 });
+document.querySelector("#int-wrap")!.addEventListener("click", () => {
+  game.interestEnabled = !game.interestEnabled;
+  flash(game.interestEnabled ? "Debt interest ON." : "Debt interest OFF (sandbox).");
+  saveGame();
+  syncHud();
+});
 document.querySelector("#rep-wrap")!.addEventListener("click", () => {
   const r = game.player.reputation;
   const msg =
@@ -388,8 +514,16 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
       return;
     }
     if (tool === "truck") {
-      if (!askConfirm("truck", "Adds a haul truck.")) return;
+      if (!askConfirm("truck", "Adds a 400 bbl haul truck.")) return;
       game.buyTruck();
+      flash(game.message);
+      disarmToSelect();
+      syncAll();
+      return;
+    }
+    if (tool === "small_truck") {
+      if (!askConfirm("small_truck", "Adds a 200 bbl haul truck.")) return;
+      game.buyTruck(SMALL_TRUCK_CAP_BBL, SMALL_TRUCK_COST);
       flash(game.message);
       disarmToSelect();
       syncAll();
@@ -862,7 +996,9 @@ function syncHud() {
   const d = game.dashboard();
   document.querySelector("#stat-cash")!.textContent = `$${money(game.player.cash)}`;
   document.querySelector("#stat-debt")!.textContent = `$${money(game.player.credit.debt)}`;
-  document.querySelector("#stat-int")!.textContent = `$${money(d.interestPerDay)}`;
+  document.querySelector("#stat-int")!.textContent = d.interestOn
+    ? `$${money(d.interestPerDay)}`
+    : "off";
   const repEl = document.querySelector("#stat-rep") as HTMLElement;
   repEl.textContent = game.player.reputation.toFixed(0);
   repEl.style.color =
@@ -950,10 +1086,11 @@ function frame(now: number) {
 }
 
 const restored = loadGame();
+refreshProfileUI();
 syncAll();
 flash(
   restored
-    ? "Session restored. Autosaves as you play — Reset lease starts fresh."
+    ? `Profile "${profiles.active}" restored. Autosaves as you play.`
     : "Cardinal roads only (N/E/S/W). Costly tools need a second click to confirm. Ops/Rep are clickable.",
 );
 requestAnimationFrame(frame);

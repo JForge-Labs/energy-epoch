@@ -165,6 +165,7 @@ export type BuildTool =
   | "sell"
   | "choke"
   | "truck"
+  | "small_truck"
   | "gas_line"
   | "explore"
   | "upgrade_rig"

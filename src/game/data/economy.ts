@@ -10,6 +10,9 @@ export const BATTERY_CRUDE_CAP_BBL = 1_500;
 export const BATTERY_CLEAN_CAP_BBL = 1_500;
 /** Oil tanker capacity (bbl) — exactly one base wellhead tank. */
 export const TRUCK_CAP_BBL = 400;
+/** Small tanker — cheaper, holds 200 bbl (handy early / for small wells). */
+export const SMALL_TRUCK_CAP_BBL = 200;
+export const SMALL_TRUCK_COST = 50_000;
 /** Truck departs a wellhead once it holds this fraction of a full load. */
 export const CRUDE_LOAD_READY_FRAC = 0.9;
 /** Battery keeps a truck loading clean until this little crude remains. */

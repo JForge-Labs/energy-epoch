@@ -76,6 +76,10 @@ body {
   font-weight: 600;
 }
 
+#stat-debt {
+  color: var(--danger);
+}
+
 .stage-wrap {
   position: relative;
   min-height: 0;
@@ -176,6 +180,18 @@ body {
 .hud-actions {
   display: flex;
   gap: 0.35rem;
+  align-items: center;
+}
+
+.profile-select {
+  background: #141916;
+  color: var(--amber-hot);
+  border: 1px solid var(--bg-panel-edge);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.3rem 0.4rem;
+  max-width: 9rem;
+  cursor: pointer;
 }
 
 .clickable {
