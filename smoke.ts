@@ -344,6 +344,33 @@ console.log("trucks haul clean to the refinery");
   check("clean oil reaches the refinery (sales happen)", g4.totalOilSold > 0);
 }
 
+console.log("oil pipe sells clean without truck camping");
+{
+  // Live oil pipe should move clean even when trucks are free for crude.
+  const gP = new Game();
+  gP.player.cash = 50_000_000;
+  const bat = gP.buildings.find((b) => b.kind === "battery")!;
+  const ref = gP.buildings.find((b) => b.kind === "refinery")!;
+  // Same staircase pattern as the oil-connected smoke above.
+  let laidP = 0;
+  for (const p of staircase({ x: bat.x, y: bat.y }, { x: ref.x, y: ref.y })) {
+    if (gP.buildingAt(p.x, p.y)) continue;
+    if (gP.layPipe(p.x, p.y, "oil")) laidP++;
+  }
+  check("oil pipe sell-test laid tiles", laidP > 5);
+  gP.update(0.2);
+  check("oil pipe sell-test connected", gP.oilConnected === true);
+  bat.clean = 900;
+  for (const t of gP.units.filter((u) => u.kind === "truck")) {
+    t.stopped = true;
+    t.cargo = 0;
+    t.cargoKind = "none";
+  }
+  for (let i = 0; i < 80; i++) gP.update(0.2);
+  check("oil pipe moves clean to sales", gP.totalOilSold > 50);
+  check("oil pipe left clean below starting load", bat.clean < 900);
+}
+
 console.log("treating unblocks when clean is hauled (crude bottleneck)");
 {
   // Clean nearly full + competing full wellhead: trucks must ship clean so
