@@ -29,17 +29,39 @@ check("majority open ground/scrub", (counts.ground ?? 0) + (counts.scrub ?? 0) >
 
 // Oil districts: plenty of drill-worthy rock, spread across the whole lease so
 // the player always has a next field to develop instead of running dry.
+const openTerrain = (t: string) => t === "ground" || t === "scrub";
 let goodProspect = 0;
+let goodOffLand = 0;
 const oilQuadrants = new Set<string>();
 for (let y = 0; y < rows; y++)
   for (let x = 0; x < cols; x++) {
-    if (g.tiles[y][x].subsurface.prospect >= 0.55) {
+    const ti = g.tiles[y][x];
+    if (ti.subsurface.prospect >= 0.55) {
       goodProspect++;
       oilQuadrants.add(`${x < cols / 2 ? "W" : "E"}${y < rows / 2 ? "N" : "S"}`);
+      if (!openTerrain(ti.terrain)) goodOffLand++;
     }
   }
 check("ample drill targets (>250 good+ tiles)", goodProspect > 250);
 check("oil spread across ≥3 quadrants", oilQuadrants.size >= 3);
+// Anti-trap: NO Good/Sweet oil on undrillable terrain (water/rock/creek).
+check("no drill-grade oil on impassable terrain", goodOffLand === 0);
+// A reachable Good+ land tile drillable at the T0 starter rig sits near the pad.
+let starterFieldOk = false;
+for (let y = 0; y < rows && !starterFieldOk; y++)
+  for (let x = 0; x < cols; x++) {
+    const ti = g.tiles[y][x];
+    if (
+      openTerrain(ti.terrain) &&
+      ti.subsurface.zone === 0 &&
+      ti.subsurface.prospect >= 0.55 &&
+      Math.abs(x - 9) + Math.abs(y - 13) <= 14
+    ) {
+      starterFieldOk = true;
+      break;
+    }
+  }
+check("reachable zone-0 Good+ land field near the starter", starterFieldOk);
 
 // Anchor sites cleared to ground; buildings present.
 const battery = g.buildings.find((b) => b.kind === "battery")!;

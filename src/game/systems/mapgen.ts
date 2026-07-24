@@ -1,5 +1,5 @@
 import type { Subsurface, Tile, ZoneTier } from "../types";
-import { blocksBuild } from "./terrain";
+import { blocksBuild, isOpen } from "./terrain";
 
 function hash(x: number, y: number, seed: number): number {
   let n = x * 374761393 + y * 668265263 + seed * 982451653;
@@ -207,6 +207,27 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
   clearSite(tiles, ref.x, ref.y, 2);
   carveCorridor(tiles, pad, batt);
   carveCorridor(tiles, batt, ref);
+
+  // Guarantee the tutorial can succeed: the near-starter oil district must sit
+  // on drillable LAND. A water/rock blob overlapping it strands every Good/Sweet
+  // tile (the exact new-player trap: "6 Sweet, 3 Good" all on impassable water).
+  // Clear its core to ground and carve a buildable route from the battery.
+  const starterField = {
+    x: Math.round(cols * 0.24),
+    y: Math.round(rows * 0.33),
+  };
+  clearSite(tiles, starterField.x, starterField.y, 3);
+  carveCorridor(tiles, batt, starterField);
+
+  // No drillable oil grade on undrillable terrain (water/rock/creek — only open
+  // ground and scrub can be spudded, per canDrill). A Sweet tile you can't reach
+  // is a trap, so surveys there now read barren: survey grade and drillability
+  // always agree with the terrain rules.
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (!isOpen(tiles[y][x].terrain)) tiles[y][x].subsurface.prospect = 0;
+    }
+  }
 
   return tiles;
 }

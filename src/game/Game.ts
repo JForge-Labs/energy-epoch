@@ -1639,10 +1639,14 @@ export class Game {
       bits.push(`zone ${tile.subsurface.zone}`);
       const rig = this.selectedRig();
       const tier = rig?.tier ?? 0;
-      if (tile.subsurface.zone > tier) {
+      // Drillability follows the terrain rules (canDrill): never advertise an
+      // impassable tile as a drill target — that contradiction stranded testers.
+      if (!isOpen(tile.terrain)) {
+        bits.push("not a drill site (impassable)");
+      } else if (tile.subsurface.zone > tier) {
         bits.push(`needs rig T${tile.subsurface.zone}+`);
       } else if (g === "good" || g === "sweet") {
-        bits.push("T0 drill target");
+        bits.push(`T${tier} drill target`);
       } else if (g === "barren" || g === "lean") {
         bits.push("skip — likely duster");
       }
