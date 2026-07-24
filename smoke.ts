@@ -188,6 +188,8 @@ console.log("add-tank + crude pipe");
 
   // Link tank → battery with an oil pipe tile between them (below the footprint).
   g.layPipe(bat.x, bat.y + 2, "oil");
+  // Fill clean so treat cannot consume the piped crude in the same tick.
+  bat.clean = bat.cleanCap;
   const oilBefore = tank.oil;
   const crudeBefore = bat.crude;
   g.update(0.2);
