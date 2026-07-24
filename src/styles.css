@@ -36,8 +36,9 @@ body {
 #app {
   display: grid;
   grid-template-rows: auto 1fr auto;
-  height: 100%;
-  min-height: 100dvh;
+  height: 100vh; /* fallback */
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .top-bar {
@@ -45,7 +46,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.65rem 1.1rem;
+  padding: max(0.65rem, env(safe-area-inset-top)) max(1.1rem, env(safe-area-inset-right))
+    0.65rem max(1.1rem, env(safe-area-inset-left));
   background: linear-gradient(180deg, #222820 0%, var(--bg-panel) 100%);
   border-bottom: 1px solid var(--bg-panel-edge);
 }
@@ -697,7 +699,8 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.3rem 0.45rem;
-  padding: 0.4rem 0.75rem;
+  padding: 0.4rem max(0.75rem, env(safe-area-inset-right))
+    max(0.4rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
   background: linear-gradient(0deg, rgba(14, 18, 15, 0.6), rgba(14, 18, 15, 0));
   backdrop-filter: blur(2px);
   border-top: none;
@@ -782,6 +785,12 @@ body {
   color: var(--text-dim);
   text-align: center;
   margin-top: 0.1rem;
+  /* Single line, clipped — a wrapping status message must never change the
+     toolbar height (which would resize/jitter the map above it). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .toast {

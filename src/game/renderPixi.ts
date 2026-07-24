@@ -101,7 +101,7 @@ export class PixiRenderer {
 
   async init(): Promise<void> {
     const parent = this.canvas.parentElement!;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
     this.w = Math.floor(parent.clientWidth * dpr);
     this.h = Math.floor(parent.clientHeight * dpr);
 
@@ -134,7 +134,7 @@ export class PixiRenderer {
   resize(): void {
     if (!this.app) return;
     const parent = this.canvas.parentElement!;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const cssW = parent.clientWidth;
     const cssH = parent.clientHeight;
     this.w = Math.floor(cssW * dpr);

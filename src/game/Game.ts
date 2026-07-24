@@ -168,6 +168,9 @@ export class Game {
   /** Gas-pipe tiles reachable from a gas plant (keys "x,y"). */
   private gasConnectedTiles = new Set<string>();
   private pipeOilBucket = 0;
+  /** Running total of bbl treated this calendar day (for SCADA). */
+  private treatAccToday = 0;
+  private treatDayStamp = 1;
   /** Recompute pipe networks only when connectivity actually changed. */
   private pipesDirty = true;
   /** Player time-of-day speed multiplier (0 = paused). */
@@ -1747,13 +1750,70 @@ export class Game {
     const battWithCrudeRoom = () => batteries.filter((b) => b.crude < b.crudeCap - 1);
     const refWithRoom = () =>
       refineries.filter((r) => (r.throughputCap ?? 0) - (r.throughputUsed ?? 0) > 0.5);
-    // A battery worth a clean run: a half-truckload, ~40% full, or draining the
-    // last clean once crude is gone. Loose enough that clean never gets stuck.
-    const cleanLoadable = (b: Building, cap: number) =>
-      b.clean >= Math.min(cap * 0.5, b.cleanCap * 0.4) ||
-      (b.clean >= 5 && b.crude < CLEAN_DRAIN_MIN_BBL);
+    // Any meaningful clean load is worth a run. Full clean tanks STOP treating
+    // (crude→clean freezes) — so ship early and often.
+    const cleanLoadable = (b: Building, cap: number) => {
+      const cCap = Math.max(1, b.cleanCap || BATTERY_CLEAN_CAP_BBL);
+      if (!(b.clean >= 5)) return false;
+      const room = Math.max(0, cCap - b.clean);
+      // Quarter truckload, 10% of tank, last-drain, or nearly full clean side.
+      return (
+        b.clean >= Math.min(cap * 0.25, cCap * 0.1) ||
+        b.crude < CLEAN_DRAIN_MIN_BBL ||
+        room <= Math.max(cap * 0.35, cCap * 0.1)
+      );
+    };
     const byCleanFrac = (a: Building, b: Building) =>
-      b.clean / Math.max(1, b.cleanCap) - a.clean / Math.max(1, a.cleanCap);
+      b.clean / Math.max(1, b.cleanCap || 1) - a.clean / Math.max(1, a.cleanCap || 1);
+
+    /** True if truck can path to some refinery with sales room (or any refinery). */
+    const canReachRefinery = (truck: Unit): boolean => {
+      const targets = refWithRoom().length ? refWithRoom() : refineries;
+      for (const r of targets) {
+        if (atBldg(truck, r)) return true;
+        const path = this.roadPath(truck, { x: r.x, y: r.y });
+        if (path.length) return true;
+      }
+      // Also count oil-pipe takeaway from any battery (no truck needed).
+      return this.oilConnected;
+    };
+
+    /** Dump clean cargo back into a battery so treating isn't hostage to a stuck truck. */
+    const returnCleanToBattery = (truck: Unit): boolean => {
+      if (truck.cargoKind !== "clean" || truck.cargo < 0.5) return false;
+      const bat =
+        batteryAt(truck) ??
+        this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y), (b) => {
+          const cCap = b.cleanCap || BATTERY_CLEAN_CAP_BBL;
+          return b.clean < cCap - 0.5;
+        }) ??
+        this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y));
+      if (!bat) return false;
+      if (!(bat.cleanCap > 0)) bat.cleanCap = BATTERY_CLEAN_CAP_BBL;
+      const room = Math.max(0, bat.cleanCap - bat.clean);
+      const into = Math.min(truck.cargo, room);
+      if (into <= 0.01) return false;
+      // Must be on battery or able to drive there.
+      if (!atBldg(truck, bat)) {
+        if (!assignPath(truck, bat.x, bat.y)) return false;
+        truck.job = "to_battery";
+        truck.targetBuildingId = bat.id;
+        return true; // en route to dump
+      }
+      bat.clean += into;
+      truck.cargo -= into;
+      if (truck.cargo < 0.5) {
+        truck.cargo = 0;
+        truck.cargoKind = "none";
+        truck.job = "idle";
+        truck.busy = false;
+      }
+      this.message =
+        "No road to refinery — returned clean to battery. Lay road/pipe battery→refinery.";
+      this.guide =
+        "CLEAN STUCK: road-connect battery → refinery (cardinal), or run an oil pipe.";
+      return true;
+    };
 
     for (const truck of this.units.filter((u) => u.kind === "truck")) {
       if (truck.stopped) {
@@ -1811,6 +1871,7 @@ export class Game {
       const batHere =
         truck.cargoKind === "crude" && truck.cargo > 0 ? batteryAt(truck) : undefined;
       if (batHere) {
+        if (!(batHere.crudeCap > 0)) batHere.crudeCap = BATTERY_CRUDE_CAP_BBL;
         const room = Math.max(0, batHere.crudeCap - batHere.crude);
         const into = Math.min(truck.cargo, room);
         batHere.crude += into;
@@ -1828,15 +1889,16 @@ export class Game {
             gotoBuilding(truck, others);
             continue;
           }
-          this.message = "Batteries crude full — treat/haul clean to free space.";
+          this.message = "Batteries crude full — haul clean so treating frees room.";
           truck.job = "idle";
         }
       }
 
       // --- Load clean at the battery we're standing on (unless crude-only) ---
+      // Only load if we can actually reach a refinery (or oil pipe is online).
       const batLoad =
         truck.cargo < 1 && truck.cargoMode !== "crude" ? batteryAt(truck) : undefined;
-      if (batLoad && cleanLoadable(batLoad, truck.cargoCap)) {
+      if (batLoad && cleanLoadable(batLoad, truck.cargoCap) && canReachRefinery(truck)) {
         const load = Math.min(truck.cargoCap, batLoad.clean);
         batLoad.clean -= load;
         truck.cargo = load;
@@ -1893,13 +1955,19 @@ export class Game {
         truck.job = "to_refinery";
         const targets = refWithRoom();
         if (!gotoBuilding(truck, targets.length ? targets : refineries)) {
-          this.message = "No road for clean haul to a refinery.";
+          // Don't hold clean hostage forever — return it so treating can keep room.
+          if (!returnCleanToBattery(truck)) {
+            this.message = "No road for clean haul to a refinery — lay battery→refinery road/pipe.";
+            this.guide =
+              "NEED ROAD/PIPE: clean can't leave the battery. Connect battery → refinery.";
+          }
         }
         continue;
       }
 
-      // --- Empty truck: serve the BIGGEST NEED (crude vs clean), honoring the
-      //     truck's duty assignment. Clean ties win so treating never stalls. ---
+      // --- Empty truck: CLEAN FIRST whenever loadable. Treating dies if clean
+      //     fills; crude can wait one cycle. Only skip clean for a true wellhead
+      //     emergency when clean still has plenty of room. ---
       const wantCrude = truck.cargoMode !== "clean";
       const wantClean = truck.cargoMode !== "crude";
       const readyTanks = wantCrude ? readyWellheads(truck.cargoCap) : [];
@@ -1909,16 +1977,49 @@ export class Game {
       )
         .slice()
         .sort(byCleanFrac);
-      const cleanFeasible = cleanCandidates.length > 0 && refWithRoom().length > 0;
+      // Clean jobs require outbound takeaway (road or oil pipe).
+      const cleanFeasible =
+        cleanCandidates.length > 0 &&
+        (refWithRoom().length > 0 || this.oilConnected) &&
+        (this.oilConnected || canReachRefinery(truck));
 
       const tank = readyTanks[0];
       const tankFrac = tank ? tank.oil / Math.max(1, tank.oilCap) : 0;
-      const cleanFrac = cleanCandidates[0]
-        ? cleanCandidates[0].clean / Math.max(1, cleanCandidates[0].cleanCap)
+      const topClean = cleanCandidates[0];
+      const cleanFrac = topClean
+        ? topClean.clean / Math.max(1, topClean.cleanCap || 1)
         : 0;
-      const goClean = cleanFeasible && (!crudeFeasible || cleanFrac >= tankFrac);
+      const cleanRoomFrac = topClean
+        ? 1 - topClean.clean / Math.max(1, topClean.cleanCap || 1)
+        : 1;
+      // Wellhead emergency only steals the truck if clean still has headroom.
+      const wellEmergency = tankFrac >= 0.95;
+      const goClean =
+        cleanFeasible &&
+        (!crudeFeasible || !wellEmergency || cleanRoomFrac < 0.45 || cleanFrac >= 0.12);
 
-      if (!goClean && crudeFeasible && tank) {
+      if (goClean) {
+        truck.job = "to_battery";
+        let chosen: Building | undefined;
+        for (const b of cleanCandidates) {
+          if (atBldg(truck, b)) {
+            chosen = b;
+            break;
+          }
+          if (assignPath(truck, b.x, b.y)) {
+            chosen = b;
+            break;
+          }
+        }
+        if (!chosen) {
+          this.message = "No road to a battery for clean pickup.";
+        } else if (!atBldg(truck, chosen)) {
+          this.message = "Truck to battery for clean → refinery.";
+        }
+        continue;
+      }
+
+      if (crudeFeasible && tank) {
         // Fullest reachable ready wellhead so an unreachable tank can't stall us.
         let chosen: Building | undefined;
         for (const t of readyTanks) {
@@ -1952,24 +2053,12 @@ export class Game {
           this.strandedDays.delete(tank.id);
           continue;
         }
-        // fall through to clean if crude is unreachable
       }
 
-      if (cleanFeasible) {
-        truck.job = "to_battery";
-        let chosen: Building | undefined;
-        for (const b of cleanCandidates) {
-          if (atBldg(truck, b)) {
-            chosen = b;
-            break;
-          }
-          if (assignPath(truck, b.x, b.y)) {
-            chosen = b;
-            break;
-          }
-        }
-        if (!chosen) this.message = "No road to a battery for clean pickup.";
-        continue;
+      // Clean loadable but no road to refinery — tell the player clearly.
+      if (wantClean && cleanCandidates.length > 0 && !this.oilConnected && !canReachRefinery(truck)) {
+        this.message = "Clean ready but no road/pipe to refinery — treating will freeze when clean fills.";
+        this.guide = "Lay ROAD or OIL PIPE: battery → refinery so clean can leave.";
       }
 
       const park = this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y));
@@ -1981,12 +2070,38 @@ export class Game {
 
   /** Treat crude → clean at the battery */
   private treatBattery(dtDays: number) {
+    let blocked = false;
+    let treated = 0;
     for (const b of this.buildings) {
       if (b.kind !== "battery" || !b.online) continue;
+      // Repair corrupt / legacy saves so treating can't NaN-freeze.
+      if (!(b.cleanCap > 0)) b.cleanCap = BATTERY_CLEAN_CAP_BBL;
+      if (!(b.crudeCap > 0)) b.crudeCap = BATTERY_CRUDE_CAP_BBL;
+      if (!Number.isFinite(b.crude)) b.crude = 0;
+      if (!Number.isFinite(b.clean)) b.clean = 0;
+      b.crude = Math.min(Math.max(0, b.crude), b.crudeCap);
+      b.clean = Math.min(Math.max(0, b.clean), b.cleanCap);
       const room = Math.max(0, b.cleanCap - b.clean);
+      if (b.crude > 1 && room <= 0.5) {
+        blocked = true;
+        continue;
+      }
+      if (room <= 0 || b.crude <= 0 || dtDays <= 0) continue;
       const turn = Math.min(b.crude, room, BATTERY_TREAT_BBL_PER_DAY * dtDays);
+      if (!(turn > 0)) continue;
       b.crude -= turn;
       b.clean += turn;
+      treated += turn;
+    }
+    // Roll daily treat counter with the market day.
+    if (Math.floor(this.market.day) !== this.treatDayStamp) {
+      this.treatDayStamp = Math.floor(this.market.day);
+      this.treatAccToday = 0;
+    }
+    this.treatAccToday += treated;
+    if (blocked && treated < 0.01) {
+      this.message =
+        "Treating STOPPED — clean tanks full. Haul clean to refinery (road/truck or oil pipe).";
     }
   }
 
@@ -2338,11 +2453,12 @@ export class Game {
     const refineries = this.buildings.filter((b) => b.kind === "refinery");
     const producing = this.wells.filter((w) => w.status === "producing" && !w.choked);
     const trucks = this.units.filter((u) => u.kind === "truck");
-    const cleanTrucks = trucks.filter((u) => u.cargoMode !== "crude").length;
+    const running = trucks.filter((u) => !u.stopped);
+    const cleanTrucks = running.filter((u) => u.cargoMode !== "crude").length;
     const crude = batteries.reduce((s, b) => s + b.crude, 0);
-    const crudeCap = batteries.reduce((s, b) => s + b.crudeCap, 0) || 1;
+    const crudeCap = batteries.reduce((s, b) => s + (b.crudeCap || 0), 0) || 1;
     const clean = batteries.reduce((s, b) => s + b.clean, 0);
-    const cleanCap = batteries.reduce((s, b) => s + b.cleanCap, 0) || 1;
+    const cleanCap = batteries.reduce((s, b) => s + (b.cleanCap || 0), 0) || 1;
     const crudePct = crude / crudeCap;
     const cleanPct = clean / cleanCap;
     const slotCap = refineries.reduce((s, b) => s + (b.throughputCap ?? 0), 0);
@@ -2354,23 +2470,40 @@ export class Game {
         b.kind === "wellhead_tank" && b.online && b.oilCap > 0 && b.oil / b.oilCap >= 0.85,
     ).length;
 
-    // Clean backing up stalls the whole chain — highest priority.
-    if (cleanPct >= 0.8) {
+    // All trucks parked → logistics dead, treating will fill clean then freeze.
+    if (trucks.length > 0 && running.length === 0) {
+      return {
+        level: "crit",
+        msg: "All trucks STOPPED — open Fleet (bottom-left) and tap Start, or crude/clean never move.",
+      };
+    }
+
+    // Clean backing up stalls treating (crude→clean needs clean tank room).
+    if (cleanPct >= 0.55) {
       if (!refineries.length) {
-        return { level: "crit", msg: "Clean tanks full & no refinery — build one, then a road/pipe to it." };
+        return { level: "crit", msg: "Clean tanks filling & no refinery — build one, then a road/pipe to it." };
       }
       if (!this.refineryReachable()) {
-        return { level: "crit", msg: "Clean full but NO ROAD to a refinery — lay a road (or oil pipe) battery → refinery." };
+        return { level: "crit", msg: "Clean backing up but NO ROAD to a refinery — lay a road (or oil pipe) battery → refinery. Treating stops when clean is full." };
       }
       if (slotUsed >= slotCap - 1) {
-        return { level: "crit", msg: `Clean full & refinery slots maxed (${slotCap}/day) — build another refinery, run oil pipe, or choke wells.` };
+        return { level: "crit", msg: `Clean backing up & refinery slots maxed (${slotCap}/day) — build another refinery, run oil pipe, or choke wells.` };
       }
       if (cleanTrucks === 0) {
-        return { level: "crit", msg: "Clean full but no truck hauls it — right-click a truck → Clean, or buy one." };
+        return { level: "crit", msg: "Clean backing up but no running truck will haul it — Fleet → Start, or set a truck to Clean." };
       }
-      return { level: "crit", msg: "Clean backing up — add a truck (or set one to Clean), or run an oil pipe to sales." };
+      return {
+        level: "crit",
+        msg: "Clean tanks filling — haul clean to the refinery (truck/oil pipe) or treating freezes and crude piles up.",
+      };
     }
     if (crudePct >= 0.8) {
+      if (cleanPct >= 0.35) {
+        return {
+          level: "crit",
+          msg: "Crude full because clean isn't leaving the battery — haul clean (or oil pipe) so treating can run.",
+        };
+      }
       if (prodBopd > treatCeiling) {
         return { level: "crit", msg: `Crude full — treating maxed at ${treatCeiling}/day. Build another battery or choke a well.` };
       }
@@ -2403,14 +2536,30 @@ export class Game {
     const stranded = [...this.strandedDays.entries()].filter(([, d]) => d >= 0.5);
     const interestDay =
       this.player.credit.debt * (this.player.credit.apr / 365);
+    const crude = batteries.reduce((s, b) => s + b.crude, 0);
+    const crudeCap = batteries.reduce((s, b) => s + (b.crudeCap || 0), 0);
+    const clean = batteries.reduce((s, b) => s + b.clean, 0);
+    const cleanCap = batteries.reduce((s, b) => s + (b.cleanCap || 0), 0);
+    const treatCap = batteries.length * BATTERY_TREAT_BBL_PER_DAY;
+    // Instant treat rate estimate: full rate if crude present and clean has room.
+    let treatLive = 0;
+    for (const b of batteries) {
+      if (!b.online || b.crude < 0.5) continue;
+      const cCap = b.cleanCap || BATTERY_CLEAN_CAP_BBL;
+      if (b.clean >= cCap - 0.5) continue;
+      treatLive += BATTERY_TREAT_BBL_PER_DAY;
+    }
     return {
       oilBopd,
       gasMcfd,
       wellCount: wells.length,
-      crude: batteries.reduce((s, b) => s + b.crude, 0),
-      crudeCap: batteries.reduce((s, b) => s + b.crudeCap, 0),
-      clean: batteries.reduce((s, b) => s + b.clean, 0),
-      cleanCap: batteries.reduce((s, b) => s + b.cleanCap, 0),
+      crude,
+      crudeCap,
+      clean,
+      cleanCap,
+      treatLive,
+      treatToday: this.treatAccToday,
+      treatCap,
       trucks: trucks.map((t) => ({
         id: t.id,
         job: t.job,
@@ -2434,7 +2583,6 @@ export class Game {
       guide: this.guide,
       advice: this.bottleneckAdvice(),
       triage: this.triage(),
-      treatCap: batteries.length * BATTERY_TREAT_BBL_PER_DAY,
       refSlotCap: refineries.reduce((s, b) => s + (b.throughputCap ?? 0), 0),
       refSlotUsed: refineries.reduce((s, b) => s + (b.throughputUsed ?? 0), 0),
       batteries: batteries.length,
@@ -2516,6 +2664,24 @@ export class Game {
     this.interestBucket = s.priv.interestBucket;
     // Keep the module id counter ahead of any restored ids.
     nextId = Math.max(nextId, s.idCounter ?? 1);
+    // Legacy / corrupt save repair (battery caps, truck flags).
+    for (const b of this.buildings) {
+      if (b.kind === "battery") {
+        if (!(b.cleanCap > 0)) b.cleanCap = BATTERY_CLEAN_CAP_BBL;
+        if (!(b.crudeCap > 0)) b.crudeCap = BATTERY_CRUDE_CAP_BBL;
+        if (!Number.isFinite(b.crude)) b.crude = 0;
+        if (!Number.isFinite(b.clean)) b.clean = 0;
+        b.crude = Math.min(b.crude, b.crudeCap);
+        b.clean = Math.min(b.clean, b.cleanCap);
+      }
+    }
+    for (const u of this.units) {
+      if (u.kind !== "truck") continue;
+      if (u.stopped == null) u.stopped = false;
+      if (!u.cargoMode) u.cargoMode = "auto";
+      if (!Number.isFinite(u.cargo)) u.cargo = 0;
+    }
+    this.pipesDirty = true;
   }
 
   private tickRepConsequences() {

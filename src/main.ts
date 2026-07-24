@@ -256,15 +256,21 @@ function updateScada(d: Dash) {
 
   const crudePct = d.crudeCap ? (d.crude / d.crudeCap) * 100 : 0;
   const cleanPct = d.cleanCap ? (d.clean / d.cleanCap) * 100 : 0;
-  const treatPct = d.treatCap ? Math.min(100, (d.oilBopd / d.treatCap) * 100) : 0;
+  // Treat meter = live treating rate vs capacity (NOT well production).
+  // 0 live + crude in tank + clean full = treating blocked (the freeze bug).
+  const treatLive = d.treatLive ?? 0;
+  const treatPct = d.treatCap ? Math.min(100, (treatLive / d.treatCap) * 100) : 0;
+  const treatBlocked = d.crude > 10 && treatLive < 1;
   setMeter(S.crudeFill, S.crudeVal, crudePct, meterStatus(crudePct, 70, 90), `${d.crude.toFixed(0)}/${d.crudeCap}`);
   setMeter(S.cleanFill, S.cleanVal, cleanPct, meterStatus(cleanPct, 70, 90), `${d.clean.toFixed(0)}/${d.cleanCap}`);
   setMeter(
     S.treatFill,
     S.treatVal,
-    treatPct,
-    d.oilBopd > d.treatCap ? "red" : d.oilBopd > d.treatCap * 0.9 ? "amber" : "green",
-    `${d.oilBopd.toFixed(0)}/${d.treatCap}`,
+    treatBlocked ? 100 : treatPct,
+    treatBlocked ? "red" : treatLive > 0 ? "green" : "grey",
+    treatBlocked
+      ? `BLOCKED clean full`
+      : `${treatLive.toFixed(0)}/${d.treatCap} live`,
   );
   const battWorst = Math.max(crudePct, cleanPct);
   S.battLed.dataset.status =
@@ -320,24 +326,48 @@ function updateTicker(d: Dash) {
 }
 
 // Fleet panel: one row per truck with a duty-cycle button and a stop/start
-// button. Rebuilt each frame (few trucks); one delegated listener drives it.
+// button. The button STRUCTURE is rebuilt only when the truck set / mode / stop
+// state changes — a per-frame innerHTML rebuild would replace a button between
+// mousedown and mouseup, so clicks would never fire. Live job/cargo text is
+// mutated each frame via cached name refs. One delegated listener drives it.
+let fleetSig = "";
+const fleetNameEls = new Map<string, HTMLElement>();
+function fleetName(t: Dash["trucks"][number], i: number): string {
+  const cargo = t.cargo > 0 ? `${t.kind} ${t.cargo.toFixed(0)}` : "empty";
+  const job = t.stopped ? "stopped" : t.job;
+  return `#${i + 1} · ${t.cargoCap}bbl · ${job} · ${cargo}`;
+}
 function updateFleet(d: Dash) {
   if (!d.trucks.length) {
-    fleetBody.innerHTML = `<div class="fleet-empty">No trucks — buy one from Machinery.</div>`;
+    if (fleetSig !== "∅") {
+      fleetBody.innerHTML = `<div class="fleet-empty">No trucks — buy one from Machinery.</div>`;
+      fleetSig = "∅";
+      fleetNameEls.clear();
+    }
     return;
   }
-  fleetBody.innerHTML = d.trucks
-    .map((t, i) => {
-      const cargo = t.cargo > 0 ? `${t.kind} ${t.cargo.toFixed(0)}` : "empty";
-      const job = t.stopped ? "stopped" : t.job;
-      const modeLabel = t.mode === "auto" ? "Auto" : t.mode === "crude" ? "Crude" : "Clean";
-      return `<div class="fleet-row">
-        <span class="fleet-name">#${i + 1} · ${t.cargoCap}bbl · ${job} · ${cargo}</span>
-        <button class="fleet-btn mode-${t.mode}" data-id="${t.id}" data-act="mode" data-mode="${t.mode}">${modeLabel}</button>
-        <button class="fleet-btn ${t.stopped ? "is-stopped" : ""}" data-id="${t.id}" data-act="stop" data-stopped="${t.stopped}">${t.stopped ? "Start" : "Stop"}</button>
-      </div>`;
-    })
-    .join("");
+  const sig = d.trucks.map((t) => `${t.id}:${t.mode}:${t.stopped ? 1 : 0}`).join("|");
+  if (sig !== fleetSig) {
+    fleetSig = sig;
+    fleetBody.innerHTML = d.trucks
+      .map((t) => {
+        const modeLabel = t.mode === "auto" ? "Auto" : t.mode === "crude" ? "Crude" : "Clean";
+        return `<div class="fleet-row">
+          <span class="fleet-name" data-id="${t.id}"></span>
+          <button class="fleet-btn mode-${t.mode}" data-id="${t.id}" data-act="mode" data-mode="${t.mode}">${modeLabel}</button>
+          <button class="fleet-btn ${t.stopped ? "is-stopped" : ""}" data-id="${t.id}" data-act="stop" data-stopped="${t.stopped}">${t.stopped ? "Start" : "Stop"}</button>
+        </div>`;
+      })
+      .join("");
+    fleetNameEls.clear();
+    fleetBody.querySelectorAll<HTMLElement>(".fleet-name").forEach((el) => {
+      fleetNameEls.set(el.dataset.id!, el);
+    });
+  }
+  d.trucks.forEach((t, i) => {
+    const el = fleetNameEls.get(t.id);
+    if (el) el.textContent = fleetName(t, i);
+  });
 }
 
 fleetBody.addEventListener("click", (e) => {
@@ -376,12 +406,19 @@ function resize() {
     return;
   }
   const wrap = canvas.parentElement!;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 3); // 3 = crisp on retina
   canvas.width = Math.floor(wrap.clientWidth * dpr);
   canvas.height = Math.floor(wrap.clientHeight * dpr);
 }
 window.addEventListener("resize", resize);
 resize();
+// Keep the canvas backing store matched to its container even when a surrounding
+// element (toolbar/HUD reflow, mobile browser chrome) changes size — otherwise
+// the fixed-size canvas gets CSS-stretched and the map appears to shift.
+if ("ResizeObserver" in window) {
+  const ro = new ResizeObserver(() => resize());
+  ro.observe(canvas.parentElement!);
+}
 
 if (USE_PIXI) {
   // Lazy-load Pixi so the default canvas bundle stays lightweight.
@@ -652,6 +689,14 @@ function saveUi() {
   }
 }
 const uiState = loadUi();
+// Mobile: start with Fleet collapsed so Stop/Start isn't fat-fingered over the map.
+if (
+  uiState.fleet === undefined &&
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(max-width: 700px)").matches
+) {
+  uiState.fleet = true;
+}
 const PANELS: { sel: string; key: keyof UiState }[] = [
   { sel: "#inspect-panel", key: "inspect" },
   { sel: "#dash-panel", key: "dash" },

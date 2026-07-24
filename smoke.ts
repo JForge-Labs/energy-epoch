@@ -330,6 +330,52 @@ console.log("trucks haul clean to the refinery");
   check("clean oil reaches the refinery (sales happen)", g4.totalOilSold > 0);
 }
 
+console.log("treating unblocks when clean is hauled (crude bottleneck)");
+{
+  // Clean nearly full + competing full wellhead: trucks must ship clean so
+  // treat can keep converting crude→clean (prod mobile freeze symptom).
+  const gT = new Game();
+  const bat = gT.buildings.find((b) => b.kind === "battery")!;
+  const ref = gT.buildings.find((b) => b.kind === "refinery")!;
+  let cx = bat.x;
+  let cy = bat.y;
+  gT.tiles[cy][cx].hasRoad = true;
+  let guard = 0;
+  while ((cx !== ref.x || cy !== ref.y) && guard++ < 250) {
+    if (cx !== ref.x) cx += Math.sign(ref.x - cx);
+    else cy += Math.sign(ref.y - cy);
+    gT.tiles[cy][cx].hasRoad = true;
+  }
+  gT.tiles[bat.y + 1][bat.x].hasRoad = true;
+  gT.buildings.push({
+    id: "tk_compete",
+    kind: "wellhead_tank",
+    x: bat.x,
+    y: bat.y + 1,
+    oil: 400,
+    oilCap: 400,
+    crude: 0,
+    crudeCap: 0,
+    clean: 0,
+    cleanCap: 0,
+    wellId: null,
+    online: true,
+    hp: 100,
+  });
+  bat.clean = bat.cleanCap * 0.9;
+  bat.crude = 800;
+  const crude0 = bat.crude;
+  const sold0 = gT.totalOilSold;
+  for (let i = 0; i < 500; i++) gT.update(0.2);
+  check("clean ships under treat pressure", gT.totalOilSold > sold0);
+  check("crude was treated (or shipped via room made)", bat.crude < crude0 - 50 || bat.clean < bat.cleanCap * 0.85);
+
+  // All trucks stopped → triage screams.
+  for (const t of gT.units.filter((u) => u.kind === "truck")) t.stopped = true;
+  const tri = gT.triage();
+  check("triage flags all trucks stopped", tri.level === "crit" && /STOP/i.test(tri.msg));
+}
+
 console.log("biggest-need + triage");
 {
   // Full clean must ship even when a ready (full) wellhead competes.
