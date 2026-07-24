@@ -21,13 +21,12 @@
  *     └─ overlays  hover ring only (everything static moved into terrain)
  *   stage: weather tint (screen space)
  *
- * TERRAIN PERF (session 2): the map is split into 16×16-tile chunks, each its
- * own Graphics. Per frame we only (a) toggle chunk visibility against the
- * viewport and (b) recompute a cheap integer signature of each *visible*
- * chunk's tile state (terrain/road/pad/surveyed/drilled); a chunk restamps
- * ONLY when its signature changes (road laid, tile surveyed, well drilled,
- * map regenerated). Steady-state cost at min zoom drops from ~4k texture
- * stamps/frame to integer math — the stamps happen once per change.
+ * TERRAIN PERF (session 2+): the map is split into 16×16-tile chunks. Each
+ * chunk has a root Container with two Graphics: opaque base stamps + survey
+ * overlays. Per frame we only (a) toggle visibility and (b) restamp when the
+ * tile signature changes. On restamp we destroy/recreate both Graphics so
+ * mid-session explore never leaves residual tint (hard-refresh looked fine;
+ * live clear() did not).
  *
  * Every texture comes from src/game/gfx/atlas.ts (`texFor(name)`): a real
  * packed atlas when present, generated placeholders until the art pass.
@@ -144,7 +143,12 @@ function tileCode(t: Tile): number {
 }
 
 interface TerrainChunk {
-  g: Graphics;
+  /** Holds base + survey so we can show/hide the whole chunk. */
+  root: Container;
+  /** Opaque terrain/road/pad textures only — never semi-transparent fills. */
+  base: Graphics;
+  /** Survey tints + pips only — separate so fill alpha cannot tint base stamps. */
+  survey: Graphics;
   sig: number;
   x0: number;
   y0: number;
@@ -306,20 +310,29 @@ export class PixiRenderer {
 
   // ---------------------------------------------------------------- terrain
 
+  private makeChunkGraphics(x0: number, y0: number): TerrainChunk {
+    const root = new Container();
+    const base = new Graphics();
+    const survey = new Graphics();
+    root.addChild(base, survey);
+    this.terrain.addChild(root);
+    return { root, base, survey, sig: Number.NaN, x0, y0 };
+  }
+
   /** (Re)allocate the chunk grid when the map itself is swapped (reset/load). */
   private ensureChunks(game: Game): void {
     if (this.chunkTilesRef === game.tiles && this.chunks.length) return;
     this.chunkTilesRef = game.tiles;
-    for (const c of this.chunks) c.g.destroy();
+    for (const c of this.chunks) {
+      c.root.destroy({ children: true });
+    }
     this.chunks = [];
     this.terrain.removeChildren();
     this.chunkCols = Math.ceil(game.config.cols / CHUNK);
     this.chunkRows = Math.ceil(game.config.rows / CHUNK);
     for (let cy = 0; cy < this.chunkRows; cy++) {
       for (let cx = 0; cx < this.chunkCols; cx++) {
-        const g = new Graphics();
-        this.terrain.addChild(g);
-        this.chunks.push({ g, sig: Number.NaN, x0: cx * CHUNK, y0: cy * CHUNK });
+        this.chunks.push(this.makeChunkGraphics(cx * CHUNK, cy * CHUNK));
       }
     }
   }
@@ -344,7 +357,7 @@ export class PixiRenderer {
       for (let cx = 0; cx < this.chunkCols; cx++) {
         const chunk = this.chunks[cy * this.chunkCols + cx];
         const visible = cx >= c0 && cx <= c1 && cy >= r0 && cy <= r1;
-        chunk.g.visible = visible;
+        chunk.root.visible = visible;
         if (!visible) continue;
 
         const xEnd = Math.min(chunk.x0 + CHUNK, game.config.cols);
@@ -365,13 +378,10 @@ export class PixiRenderer {
   }
 
   /**
-   * Stamp one chunk: terrain/road/pad + survey tint + special + pip.
-   *
-   * Two passes on purpose: Pixi Graphics can leave fill/alpha state after a
-   * semi-transparent survey rect that tints later `texture()` stamps in the
-   * same chunk. That looked like "explore darkens outside the 3×3" — the rest
-   * of the 16×16 chunk after the first surveyed tile in row-major order.
-   * Base terrain first (opaque textures only), then survey overlays.
+   * Stamp one chunk. Base and survey use *separate* Graphics objects, and we
+   * destroy/recreate them on every restamp so live explore never inherits
+   * stale fill/alpha from the previous stamp (hard-refresh looked fine because
+   * it rebuilt Graphics from scratch; mid-session clear() did not).
    */
   private stampChunk(
     game: Game,
@@ -380,10 +390,17 @@ export class PixiRenderer {
     xEnd: number,
     yEnd: number,
   ): void {
-    const g = chunk.g;
-    g.clear();
+    // Fresh Graphics — avoid Pixi clear()+texture residual tint after explore.
+    chunk.root.removeChildren();
+    chunk.base.destroy();
+    chunk.survey.destroy();
+    chunk.base = new Graphics();
+    chunk.survey = new Graphics();
+    chunk.root.addChild(chunk.base, chunk.survey);
 
-    // Pass 1 — opaque base stamps only.
+    const base = chunk.base;
+    const survey = chunk.survey;
+
     for (let y = chunk.y0; y < yEnd; y++) {
       for (let x = chunk.x0; x < xEnd; x++) {
         const tile = game.tiles[y][x];
@@ -393,11 +410,10 @@ export class PixiRenderer {
           : tile.isPad
             ? "infra.pad"
             : terrainFrame(tile.terrain, even);
-        g.texture(texFor(frame), 0xffffff, x * ts, y * ts, ts, ts);
+        base.texture(texFor(frame), 0xffffff, x * ts, y * ts, ts, ts);
       }
     }
 
-    // Pass 2 — survey tints + pips only on surveyed tiles.
     for (let y = chunk.y0; y < yEnd; y++) {
       for (let x = chunk.x0; x < xEnd; x++) {
         const tile = game.tiles[y][x];
@@ -405,16 +421,16 @@ export class PixiRenderer {
         const px = x * ts;
         const py = y * ts;
         const ov = prospectOverlay(tile.subsurface.prospect);
-        if (ov) g.rect(px, py, ts, ts).fill({ color: ov.c, alpha: ov.a });
+        if (ov) survey.rect(px, py, ts, ts).fill({ color: ov.c, alpha: ov.a });
         if (tile.subsurface.special) {
-          g.rect(px + 2, py + 2, ts - 4, ts - 4).stroke({
+          survey.rect(px + 2, py + 2, ts - 4, ts - 4).stroke({
             width: 2,
             color: P.special,
             alpha: 0.8,
           });
         }
         if (!tile.drilled) {
-          g.texture(
+          survey.texture(
             texFor(prospectPipFrame(tile.subsurface.prospect)),
             0xffffff,
             px + ts * 0.08,
