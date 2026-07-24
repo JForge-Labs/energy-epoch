@@ -10,7 +10,7 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | G2 | Terrain / pipes / logistics levers stable | doing | Level-up pass in progress |
 | G3 | Persistence reliable (save/load, reset) | doing | localStorage |
 | G4 | Mobile touch UX acceptable (no desktop-only critical path) | todo | Coordinate with playtest |
-| G5 | Pixi path decision (scaffold vs default renderer) | doing | Pixi default on `graphics/pixi-atlas-v1` (layers + atlas stub, `?canvas` fallback); soak → real atlas next |
+| G5 | Pixi path decision (scaffold vs default renderer) | doing | `graphics/pixi-atlas-v1` @ 0429029 pushed: Pixi default + layers + atlas stub; soak + real atlas + terrain batch next |
 | G6 | Balance pass for “first 15 min” new player | todo | After loop solid |
 
 ## Path W — ship (planning / when user prioritizes)
@@ -48,3 +48,4 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-24 | Railway deploy live: project `steadfast-determination` / service `energy-epoch` |
 | 2026-07-24 | Railway source branch → `cleanup/qa-fixes` (was `main`; Claude patches weren't auto-landing) |
 | 2026-07-24 | Smoke test fixed for Hard-mode interest default off; prod redeployed (`index-HSmv40DC.js`) |
+| 2026-07-24 | Graphics scaffold: branch `graphics/pixi-atlas-v1` pushed (Pixi default, atlas stub); Railway still on `cleanup/qa-fixes` |
