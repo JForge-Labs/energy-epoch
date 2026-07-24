@@ -260,20 +260,23 @@ function updateScada(d: Dash) {
   const crudePct = d.crudeCap ? (d.crude / d.crudeCap) * 100 : 0;
   const cleanPct = d.cleanCap ? (d.clean / d.cleanCap) * 100 : 0;
   // Treat meter = live treating rate vs capacity (NOT well production).
-  // 0 live + crude in tank + clean full = treating blocked (the freeze bug).
+  // crude full + clean ~0 + treat live = treating works; inflow ≥ treat rate.
   const treatLive = d.treatLive ?? 0;
   const treatPct = d.treatCap ? Math.min(100, (treatLive / d.treatCap) * 100) : 0;
-  const treatBlocked = d.crude > 10 && treatLive < 1;
+  const treatBlockedClean = !!(d.treatBlockedClean || (d.crude > 10 && treatLive < 1 && cleanPct >= 90));
+  const treatInflow = !!d.treatStarvedByInflow;
   setMeter(S.crudeFill, S.crudeVal, crudePct, meterStatus(crudePct, 70, 90), `${d.crude.toFixed(0)}/${d.crudeCap}`);
   setMeter(S.cleanFill, S.cleanVal, cleanPct, meterStatus(cleanPct, 70, 90), `${d.clean.toFixed(0)}/${d.cleanCap}`);
   setMeter(
     S.treatFill,
     S.treatVal,
-    treatBlocked ? 100 : treatPct,
-    treatBlocked ? "red" : treatLive > 0 ? "green" : "grey",
-    treatBlocked
+    treatBlockedClean ? 100 : treatPct,
+    treatBlockedClean ? "red" : treatInflow ? "amber" : treatLive > 0 ? "green" : "grey",
+    treatBlockedClean
       ? `BLOCKED clean full`
-      : `${treatLive.toFixed(0)}/${d.treatCap} live`,
+      : treatInflow
+        ? `MAX ${treatLive.toFixed(0)}/d · crude in > treat`
+        : `${treatLive.toFixed(0)}/${d.treatCap} live`,
   );
   const battWorst = Math.max(crudePct, cleanPct);
   S.battLed.dataset.status =

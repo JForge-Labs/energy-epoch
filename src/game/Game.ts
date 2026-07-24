@@ -2583,6 +2583,14 @@ export class Game {
       };
     }
     if (crudePct >= 0.8) {
+      // Treat IS running but clean leaves immediately (pipe/trucks) while crude
+      // refill ≥ treat → UI shows 1500/0 and looks "stuck".
+      if (cleanPct < 0.08 && treatCeiling > 0) {
+        return {
+          level: "warn",
+          msg: `Treating at max (${treatCeiling}/day) — clean sells as fast as it's made. Crude inflow is higher; build another battery or reduce well/pipe inflow.`,
+        };
+      }
       if (cleanPct >= 0.35) {
         return {
           level: "crit",
@@ -2628,12 +2636,25 @@ export class Game {
     const treatCap = batteries.length * BATTERY_TREAT_BBL_PER_DAY;
     // Instant treat rate estimate: full rate if crude present and clean has room.
     let treatLive = 0;
+    let treatBlockedClean = false;
     for (const b of batteries) {
-      if (!b.online || b.crude < 0.5) continue;
+      if (!b.online) continue;
       const cCap = b.cleanCap || BATTERY_CLEAN_CAP_BBL;
+      if (b.crude > 1 && b.clean >= cCap - 0.5) {
+        treatBlockedClean = true;
+        continue;
+      }
+      if (b.crude < 0.5) continue;
       if (b.clean >= cCap - 0.5) continue;
       treatLive += BATTERY_TREAT_BBL_PER_DAY;
     }
+    // Crude pinned full + clean empty + treat live = inflow ≥ treat (not a freeze).
+    const treatStarvedByInflow =
+      treatLive > 0 &&
+      crudeCap > 0 &&
+      crude / crudeCap >= 0.95 &&
+      cleanCap > 0 &&
+      clean / cleanCap <= 0.05;
     return {
       oilBopd,
       gasMcfd,
@@ -2643,6 +2664,8 @@ export class Game {
       clean,
       cleanCap,
       treatLive,
+      treatBlockedClean,
+      treatStarvedByInflow,
       treatToday: this.treatAccToday,
       treatCap,
       trucks: trucks.map((t) => ({

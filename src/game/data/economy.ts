@@ -53,8 +53,12 @@ export const OIL_PIPE_COST = 6_000;
 export const GAS_PIPE_COST = 5_000;
 /** Oil pipe intake (bbl/day) — high; refinery slot still caps actual sales. */
 export const OIL_PIPE_FLOW_BPD = 4_000;
-/** Crude pipe intake wellhead tank → battery (bbl/day, per network). */
-export const CRUDE_PIPE_FLOW_BPD = 2_000;
+/**
+ * Crude pipe intake wellhead tank → battery (bbl/day, per oil-pipe network).
+ * Must not greatly exceed one battery's treat rate or crude pins at 1500/1500
+ * while clean stays ~0 (treat is working; sales empty clean instantly).
+ */
+export const CRUDE_PIPE_FLOW_BPD = 900;
 
 /** Gas plant — premium piped-gas buyer (vs the cheap flare-stopping gas line). */
 export const GAS_PLANT_COST = 300_000;
