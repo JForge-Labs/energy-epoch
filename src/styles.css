@@ -192,6 +192,74 @@ body {
   font-weight: 600;
 }
 
+/* Truck fleet panel (bottom-left) — per-truck duty + stop/start. */
+.fleet-panel {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 3.4rem;
+  z-index: 6;
+  width: min(300px, 74vw);
+  padding: 0.5rem 0.65rem;
+  background: rgba(16, 20, 18, 0.9);
+  border: 1px solid var(--bg-panel-edge);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  max-height: 42vh;
+  overflow: auto;
+}
+
+.fleet-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid rgba(42, 51, 46, 0.5);
+}
+
+.fleet-row:last-child {
+  border-bottom: none;
+}
+
+.fleet-name {
+  flex: 1;
+  color: var(--text);
+  font-size: 0.64rem;
+}
+
+.fleet-btn {
+  appearance: none;
+  border: 1px solid var(--bg-panel-edge);
+  background: #141916;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 0.12rem 0.35rem;
+  cursor: pointer;
+  min-width: 2.7rem;
+}
+
+.fleet-btn:hover {
+  border-color: var(--steel);
+  color: var(--amber-hot);
+}
+
+.fleet-btn.mode-crude {
+  color: #c8a86a;
+}
+
+.fleet-btn.mode-clean {
+  color: #7fbfe0;
+}
+
+.fleet-btn.is-stopped {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.fleet-empty {
+  color: var(--text-dim);
+}
+
 .inspect-title {
   font-family: var(--font-display);
   font-size: 0.95rem;

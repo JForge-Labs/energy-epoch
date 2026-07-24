@@ -174,6 +174,8 @@ export class Game {
   timeScale = 1;
   /** Debt interest ("Hard mode"). Off by default; on = ~11% APR drain. */
   interestEnabled = false;
+  /** Move-and-drill: rig target to auto-spud on arrival. */
+  private pendingDrillAt: { x: number; y: number } | null = null;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -994,6 +996,42 @@ export class Game {
     return true;
   }
 
+  /** One-step: move the rig to (x,y) then auto-spud on arrival. */
+  moveAndDrill(x: number, y: number): boolean {
+    const rig = this.selectedRig();
+    if (!rig) return false;
+    // Already parked on the target and idle → drill now.
+    if (
+      Math.round(rig.x) === x &&
+      Math.round(rig.y) === y &&
+      !rig.busy &&
+      rig.path.length === 0
+    ) {
+      this.pendingDrillAt = null;
+      return this.startDrill();
+    }
+    // Quick target validation so we don't roll out pointlessly.
+    const tile = this.tiles[y]?.[x];
+    if (!tile) return false;
+    if (tile.drilled) {
+      this.message = "Already drilled here.";
+      return false;
+    }
+    if (!isOpen(tile.terrain)) {
+      this.message = `Can't drill on ${terrainLabel(tile.terrain)}.`;
+      return false;
+    }
+    const zone = tile.subsurface.zone;
+    if (zone > rig.tier || zone > this.player.drillTech) {
+      this.message = `Zone ${zone} needs rig/tech tier ${zone} — upgrade the rig.`;
+      return false;
+    }
+    if (!this.sendRigTo(x, y)) return false;
+    this.pendingDrillAt = { x, y };
+    this.message = `Rig rolling to ${x},${y} to drill.`;
+    return true;
+  }
+
   startDrill(): boolean {
     const rig = this.selectedRig();
     if (!rig) return false;
@@ -1718,6 +1756,12 @@ export class Game {
       b.clean / Math.max(1, b.cleanCap) - a.clean / Math.max(1, a.cleanCap);
 
     for (const truck of this.units.filter((u) => u.kind === "truck")) {
+      if (truck.stopped) {
+        truck.path = [];
+        truck.job = "idle";
+        truck.busy = false;
+        continue;
+      }
       if (truck.path.length) continue;
 
       // --- Sell clean at the refinery we're standing on ---
@@ -2254,6 +2298,14 @@ export class Game {
     this.message = `Truck set to ${mode === "auto" ? "auto (crude + clean)" : mode + " only"}.`;
   }
 
+  /** Park or restart a truck. */
+  setTruckStopped(id: string, stopped: boolean) {
+    const t = this.units.find((u) => u.id === id && u.kind === "truck");
+    if (!t) return;
+    t.stopped = stopped;
+    this.message = stopped ? "Truck stopped." : "Truck running.";
+  }
+
   /** Can any battery reach any refinery over the truck road network? */
   private refineryReachable(): boolean {
     const batteries = this.buildings.filter((b) => b.kind === "battery");
@@ -2363,7 +2415,10 @@ export class Game {
         id: t.id,
         job: t.job,
         cargo: t.cargo,
+        cargoCap: t.cargoCap,
         kind: t.cargoKind,
+        mode: (t.cargoMode ?? "auto") as "auto" | "crude" | "clean",
+        stopped: !!t.stopped,
       })),
       stranded: stranded.length,
       interestPerDay: this.interestEnabled ? interestDay : 0,
@@ -2547,6 +2602,17 @@ export class Game {
 
       // Weather: storms slow trucks; lightning pauses drilling
       this.moveUnits(dtHours * (0.55 + 0.45 * stormMul));
+
+      // Move-and-drill: spud once the rig reaches its pending target.
+      if (this.pendingDrillAt) {
+        const rig = this.selectedRig();
+        if (rig && !rig.busy && rig.path.length === 0) {
+          const { x, y } = this.pendingDrillAt;
+          this.pendingDrillAt = null;
+          if (Math.round(rig.x) === x && Math.round(rig.y) === y) this.startDrill();
+        }
+      }
+
       if (this.weather.kind === "lightning_cell") {
         // Drilling stands down in lightning — authentic field rule
         for (const w of this.wells) {

@@ -117,6 +117,8 @@ export interface Unit {
   tier: number;
   /** Truck duty assignment; undefined = auto. */
   cargoMode?: CargoMode;
+  /** Player-parked truck: skips hauling until restarted. */
+  stopped?: boolean;
 }
 
 export interface MarketState {

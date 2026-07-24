@@ -373,6 +373,43 @@ console.log("biggest-need + triage");
   check("triage flags clean-full + no road as critical", t.level === "crit" && /road/i.test(t.msg));
 }
 
+console.log("move-and-drill + truck stop");
+{
+  // moveAndDrill: rig rolls to an adjacent open tile and spuds on arrival.
+  const g7 = new Game();
+  const rig = g7.selectedRig()!;
+  const tx = Math.round(rig.x) + 1;
+  const ty = Math.round(rig.y);
+  const tile = g7.tiles[ty][tx];
+  tile.terrain = "ground";
+  tile.drilled = false;
+  tile.subsurface.zone = 0;
+  g7.player.cash = 1_000_000;
+  const wellsBefore = g7.wells.length;
+  g7.moveAndDrill(tx, ty);
+  for (let i = 0; i < 120; i++) g7.update(0.2);
+  check("move-and-drill spuds a well on arrival", g7.wells.length > wellsBefore);
+
+  // A stopped truck hauls nothing even with clean ready + a road to sales.
+  const g8 = new Game();
+  const truck = g8.units.find((u) => u.kind === "truck")!;
+  g8.setTruckStopped(truck.id, true);
+  const bat = g8.buildings.find((b) => b.kind === "battery")!;
+  const ref = g8.buildings.find((b) => b.kind === "refinery")!;
+  let cx = bat.x;
+  let cy = bat.y;
+  g8.tiles[cy][cx].hasRoad = true;
+  let guard = 0;
+  while ((cx !== ref.x || cy !== ref.y) && guard++ < 250) {
+    if (cx !== ref.x) cx += Math.sign(ref.x - cx);
+    else cy += Math.sign(ref.y - cy);
+    g8.tiles[cy][cx].hasRoad = true;
+  }
+  bat.clean = bat.cleanCap;
+  for (let i = 0; i < 200; i++) g8.update(0.2);
+  check("stopped truck hauls nothing", g8.totalOilSold === 0);
+}
+
 console.log("save round-trip");
 const snap = JSON.parse(JSON.stringify(g.serialize()));
 const g2 = new Game();

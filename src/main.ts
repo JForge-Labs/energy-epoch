@@ -79,6 +79,10 @@ app.innerHTML = `
       <div class="triage-title"><span class="triage-dot"></span>Next bottleneck</div>
       <div class="triage-msg" id="triage-msg">—</div>
     </div>
+    <div class="fleet-panel" id="fleet-panel">
+      <div class="inspect-title">Fleet</div>
+      <div id="fleet-body">—</div>
+    </div>
     <div class="dash-panel scada" id="dash-panel">
       <div class="inspect-title">Process</div>
       <div id="dash-body">—</div>
@@ -158,6 +162,8 @@ const dashPanel = document.querySelector<HTMLDivElement>("#dash-panel")!;
 const ledgerPanel = document.querySelector<HTMLDivElement>("#ledger-panel")!;
 const triagePanel = document.querySelector<HTMLDivElement>("#triage-panel")!;
 const triageMsg = document.querySelector<HTMLDivElement>("#triage-msg")!;
+const fleetPanel = document.querySelector<HTMLDivElement>("#fleet-panel")!;
+const fleetBody = document.querySelector<HTMLDivElement>("#fleet-body")!;
 const guideBar = document.querySelector<HTMLDivElement>("#guide-bar")!;
 const confirmBanner = document.querySelector<HTMLDivElement>("#confirm-banner")!;
 const gameoverEl = document.querySelector<HTMLDivElement>("#gameover")!;
@@ -312,6 +318,43 @@ function updateTicker(d: Dash) {
     }
   }
 }
+
+// Fleet panel: one row per truck with a duty-cycle button and a stop/start
+// button. Rebuilt each frame (few trucks); one delegated listener drives it.
+function updateFleet(d: Dash) {
+  if (!d.trucks.length) {
+    fleetBody.innerHTML = `<div class="fleet-empty">No trucks — buy one from Machinery.</div>`;
+    return;
+  }
+  fleetBody.innerHTML = d.trucks
+    .map((t, i) => {
+      const cargo = t.cargo > 0 ? `${t.kind} ${t.cargo.toFixed(0)}` : "empty";
+      const job = t.stopped ? "stopped" : t.job;
+      const modeLabel = t.mode === "auto" ? "Auto" : t.mode === "crude" ? "Crude" : "Clean";
+      return `<div class="fleet-row">
+        <span class="fleet-name">#${i + 1} · ${t.cargoCap}bbl · ${job} · ${cargo}</span>
+        <button class="fleet-btn mode-${t.mode}" data-id="${t.id}" data-act="mode" data-mode="${t.mode}">${modeLabel}</button>
+        <button class="fleet-btn ${t.stopped ? "is-stopped" : ""}" data-id="${t.id}" data-act="stop" data-stopped="${t.stopped}">${t.stopped ? "Start" : "Stop"}</button>
+      </div>`;
+    })
+    .join("");
+}
+
+fleetBody.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest(".fleet-btn") as HTMLElement | null;
+  if (!btn) return;
+  const id = btn.dataset.id!;
+  if (btn.dataset.act === "mode") {
+    const order = ["auto", "crude", "clean"] as const;
+    const cur = btn.dataset.mode as (typeof order)[number];
+    game.setTruckMode(id, order[(order.indexOf(cur) + 1) % 3]);
+  } else if (btn.dataset.act === "stop") {
+    game.setTruckStopped(id, btn.dataset.stopped !== "true");
+  }
+  flash(game.message);
+  syncDash();
+  saveGame();
+});
 
 let game = new Game();
 let cam = createCamera(game.config.cols, game.config.rows);
@@ -593,7 +636,7 @@ document.querySelectorAll(".spd-btn").forEach((btn) => {
 
 // --- Collapsible panels (maximize map view) ---
 const UI_KEY = "energy-epoch-ui";
-type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean };
+type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean; fleet?: boolean };
 function loadUi(): UiState {
   try {
     return JSON.parse(localStorage.getItem(UI_KEY) || "{}");
@@ -613,6 +656,7 @@ const PANELS: { sel: string; key: keyof UiState }[] = [
   { sel: "#inspect-panel", key: "inspect" },
   { sel: "#dash-panel", key: "dash" },
   { sel: "#ledger-panel", key: "ledger" },
+  { sel: "#fleet-panel", key: "fleet" },
 ];
 function applyPanel(sel: string, collapsed: boolean) {
   document.querySelector(sel)?.classList.toggle("panel-collapsed", collapsed);
@@ -670,24 +714,6 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
   btn.addEventListener("click", () => {
     (btn as HTMLElement).blur(); // keep keyboard focus off buttons
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
-
-    if (tool === "drill") {
-      const rig = game.selectedRig();
-      if (!rig) return;
-      const x = Math.round(rig.x);
-      const y = Math.round(rig.y);
-      const zone = game.tiles[y][x].subsurface.zone;
-      const cost = DRILL_COST[zone];
-      setActiveTool("drill");
-      if (!askConfirm("drill", `AFE ~$${money(cost)} zone ${zone} at ${x},${y}.`)) {
-        return;
-      }
-      game.startDrill();
-      flash(game.message);
-      disarmToSelect();
-      syncAll();
-      return;
-    }
 
     if (tool === "upgrade_rig") {
       if (!askConfirm("upgrade_rig", "Raises rig tier for deeper zones.")) return;
@@ -838,8 +864,19 @@ function handleTileClick(tile: { x: number; y: number }) {
   }
 
   if (tool === "drill") {
-    // drill is button-confirmed; map click while armed shouldn't re-fire
+    const zone = game.tiles[tile.y][tile.x].subsurface.zone;
+    if (
+      !askConfirm(
+        "drill",
+        `Move rig & drill at ${tile.x},${tile.y} — AFE ~$${money(DRILL_COST[zone])} (zone ${zone}).`,
+      )
+    ) {
+      return;
+    }
+    game.moveAndDrill(tile.x, tile.y);
+    flash(game.message);
     disarmToSelect();
+    syncAll();
     return;
   }
 
@@ -1196,20 +1233,22 @@ function openContextMenu(
   const items: { label: string; act: () => void }[] = [];
   const well = game.wellAt(tile.x, tile.y);
   const b = game.buildingAt(tile.x, tile.y);
-  const rig = game.units.find(
-    (u) =>
-      u.kind === "drill_rig" &&
-      Math.round(u.x) === tile.x &&
-      Math.round(u.y) === tile.y,
-  );
   const tt = game.tiles[tile.y][tile.x];
   const k = (n: number) => `$${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
 
-  if (rig && !rig.busy) {
+  const drillable = !tt.drilled && (tt.terrain === "ground" || tt.terrain === "scrub");
+  if (drillable) {
     items.push({
       label: `Drill here (AFE ${k(DRILL_COST[tt.subsurface.zone])})`,
-      act: () => game.startDrill(),
+      act: () => game.moveAndDrill(tile.x, tile.y),
     });
+  }
+  const theRig = game.selectedRig();
+  if (
+    theRig &&
+    !(Math.round(theRig.x) === tile.x && Math.round(theRig.y) === tile.y)
+  ) {
+    items.push({ label: "Move rig here", act: () => game.sendRigTo(tile.x, tile.y) });
   }
   if (well && well.status === "producing") {
     items.push({
@@ -1322,6 +1361,7 @@ function syncDash() {
   // Panels collapse to just their title; skip mutating hidden bodies.
   if (!dashPanel.classList.contains("panel-collapsed")) updateScada(d);
   if (!ledgerPanel.classList.contains("panel-collapsed")) updateTicker(d);
+  if (!fleetPanel.classList.contains("panel-collapsed")) updateFleet(d);
   if (!ledgerModal.hidden) renderLedgerModal();
   triagePanel.dataset.level = d.triage.level;
   triageMsg.textContent = d.triage.msg;
