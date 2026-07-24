@@ -1186,8 +1186,17 @@ canvas.addEventListener("pointermove", (e) => {
     hoverTip.textContent = text;
     hoverTip.style.display = "block";
     const wrap = canvas.parentElement!.getBoundingClientRect();
-    hoverTip.style.left = `${Math.min(e.clientX - wrap.left + 14, wrap.width - 280)}px`;
-    hoverTip.style.top = `${Math.min(e.clientY - wrap.top + 14, wrap.height - 60)}px`;
+    // Top-left of pointer/selection so a right-hand Apple Pencil grip
+    // doesn't cover the tip (was bottom-right: +14,+14).
+    const gap = 12;
+    const ox = e.clientX - wrap.left;
+    const oy = e.clientY - wrap.top;
+    const tw = hoverTip.offsetWidth || 200;
+    const th = hoverTip.offsetHeight || 48;
+    const left = Math.max(4, Math.min(ox - tw - gap, wrap.width - tw - 4));
+    const top = Math.max(4, Math.min(oy - th - gap, wrap.height - th - 4));
+    hoverTip.style.left = `${left}px`;
+    hoverTip.style.top = `${top}px`;
   } else {
     hoverTip.style.display = "none";
   }
