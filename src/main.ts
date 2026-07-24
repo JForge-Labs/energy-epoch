@@ -265,22 +265,34 @@ function updateScada(d: Dash) {
   const treatPct = d.treatCap ? Math.min(100, (treatLive / d.treatCap) * 100) : 0;
   const treatBlockedClean = !!(d.treatBlockedClean || (d.crude > 10 && treatLive < 1 && cleanPct >= 90));
   const treatInflow = !!d.treatStarvedByInflow;
+  // A storm-damaged (offline) battery freezes treating — call it out plainly so
+  // "crude full / clean 0" doesn't read as a mystery.
+  const battOffline = (d.batteriesOffline ?? 0) > 0;
   setMeter(S.crudeFill, S.crudeVal, crudePct, meterStatus(crudePct, 70, 90), `${d.crude.toFixed(0)}/${d.crudeCap}`);
   setMeter(S.cleanFill, S.cleanVal, cleanPct, meterStatus(cleanPct, 70, 90), `${d.clean.toFixed(0)}/${d.cleanCap}`);
   setMeter(
     S.treatFill,
     S.treatVal,
-    treatBlockedClean ? 100 : treatPct,
-    treatBlockedClean ? "red" : treatInflow ? "amber" : treatLive > 0 ? "green" : "grey",
-    treatBlockedClean
-      ? `BLOCKED clean full`
-      : treatInflow
-        ? `MAX ${treatLive.toFixed(0)}/d · crude in > treat`
-        : `${treatLive.toFixed(0)}/${d.treatCap} live`,
+    battOffline || treatBlockedClean ? 100 : treatPct,
+    battOffline || treatBlockedClean ? "red" : treatInflow ? "amber" : treatLive > 0 ? "green" : "grey",
+    battOffline
+      ? `OFFLINE — storm damage, repairing`
+      : treatBlockedClean
+        ? `BLOCKED clean full`
+        : treatInflow
+          ? `MAX ${treatLive.toFixed(0)}/d · crude in > treat`
+          : `${treatLive.toFixed(0)}/${d.treatCap} live`,
   );
   const battWorst = Math.max(crudePct, cleanPct);
-  S.battLed.dataset.status =
-    battWorst >= 90 ? "red" : battWorst >= 70 ? "amber" : d.batteries ? "green" : "grey";
+  S.battLed.dataset.status = battOffline
+    ? "red"
+    : battWorst >= 90
+      ? "red"
+      : battWorst >= 70
+        ? "amber"
+        : d.batteries
+          ? "green"
+          : "grey";
 
   const salesPct = d.refSlotCap ? (d.refSlotUsed / d.refSlotCap) * 100 : 0;
   S.salesLed.dataset.status =

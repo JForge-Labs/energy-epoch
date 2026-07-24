@@ -499,6 +499,34 @@ console.log("move-and-drill + truck stop");
   check("stopped truck hauls nothing", g8.totalOilSold === 0);
 }
 
+console.log("storm-damaged battery auto-repairs (no permanent treat deadlock)");
+{
+  const g10 = new Game();
+  const b10 = g10.buildings.find((b) => b.kind === "battery")!;
+  // Simulate a lightning kill that leaves crude backed up and clean at 0 —
+  // the exact deadlock signature (treat frozen, crude 100%, clean empty).
+  b10.online = false;
+  b10.hp = 0;
+  b10.crude = b10.crudeCap;
+  b10.clean = 0;
+  const tri = g10.triage();
+  check("offline battery raises a crit triage", tri.level === "crit" && /offline/i.test(tri.msg));
+  check("dashboard counts the offline battery", g10.dashboard().batteriesOffline === 1);
+  let recovered = false;
+  let crudeAtRepair = 0;
+  for (let i = 0; i < 200; i++) {
+    g10.update(0.2);
+    if (b10.online) {
+      recovered = true;
+      crudeAtRepair = b10.crude;
+      break;
+    }
+  }
+  check("battery auto-repairs back online", recovered);
+  for (let i = 0; i < 20; i++) g10.update(0.2);
+  check("treating resumes after repair (crude drains, clean produced)", b10.crude < crudeAtRepair && b10.clean > 0);
+}
+
 console.log("save round-trip");
 const snap = JSON.parse(JSON.stringify(g.serialize()));
 const g2 = new Game();

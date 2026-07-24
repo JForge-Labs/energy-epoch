@@ -1778,7 +1778,8 @@ export class Game {
         )
         .sort((a, b) => b.oil / Math.max(1, b.oilCap) - a.oil / Math.max(1, a.oilCap));
 
-    const battWithCrudeRoom = () => batteries.filter((b) => b.crude < b.crudeCap - 1);
+    const battWithCrudeRoom = () =>
+      batteries.filter((b) => b.online && b.crude < b.crudeCap - 1);
     const refWithRoom = () =>
       refineries.filter((r) => (r.throughputCap ?? 0) - (r.throughputUsed ?? 0) > 0.5);
     // Any meaningful clean load is worth a run. Full clean tanks STOP treating
@@ -2146,6 +2147,29 @@ export class Game {
   }
 
   /** Treat crude → clean at the battery */
+  /**
+   * Storm-damaged infrastructure heals over time and comes back online.
+   * Without this a single lightning hit that knocks a battery offline is
+   * PERMANENT and silent: treatBattery skips the offline battery, crude backs
+   * up to 100%, inbound crude trucks can't offload (they loop "to_battery"
+   * against a full tank), clean never gets produced (stays 0/1500), and the
+   * whole crude→clean→sales line deadlocks with no way to recover.
+   */
+  private repairBuildings(dtDays: number) {
+    const REGEN_HP_PER_DAY = 30;
+    for (const b of this.buildings) {
+      if (b.kind === "gas_flare" || b.kind === "gas_line") continue;
+      if (!Number.isFinite(b.hp)) b.hp = b.online ? 100 : 0;
+      if (b.hp >= 100) continue;
+      b.hp = Math.min(100, b.hp + REGEN_HP_PER_DAY * dtDays);
+      if (!b.online && b.hp >= 35) {
+        b.online = true;
+        this.pipesDirty = true;
+        this.message = `${b.kind.replace(/_/g, " ")} at ${b.x},${b.y} repaired — back online.`;
+      }
+    }
+  }
+
   private treatBattery(dtDays: number) {
     let blocked = false;
     let treated = 0;
@@ -2530,6 +2554,19 @@ export class Game {
     if (!batteries.length) {
       return { level: "crit", msg: "No battery on the lease — build one to treat crude." };
     }
+    // Storm-damaged (offline) batteries freeze treating — surface it loudly so
+    // the "crude full / clean 0 / trucks stuck" deadlock is never a mystery.
+    const offlineBatteries = batteries.filter((b) => !b.online);
+    if (offlineBatteries.length) {
+      const b = offlineBatteries[0];
+      const all = offlineBatteries.length === batteries.length;
+      return {
+        level: all ? "crit" : "warn",
+        msg: all
+          ? `Battery offline (storm damage) at ${b.x},${b.y} — treating FROZEN. Auto-repairing; or Sell + rebuild it.`
+          : `A battery is offline (storm) at ${b.x},${b.y} — reduced treating. Auto-repairing.`,
+      };
+    }
     const refineries = this.buildings.filter((b) => b.kind === "refinery");
     const producing = this.wells.filter((w) => w.status === "producing" && !w.choked);
     const trucks = this.units.filter((u) => u.kind === "truck");
@@ -2668,6 +2705,7 @@ export class Game {
       treatStarvedByInflow,
       treatToday: this.treatAccToday,
       treatCap,
+      batteriesOffline: batteries.filter((b) => !b.online).length,
       trucks: trucks.map((t) => ({
         id: t.id,
         job: t.job,
@@ -2927,8 +2965,18 @@ export class Game {
       }
       if (prod.messages[0]) this.message = prod.messages[0];
 
+      this.repairBuildings(dtDays);
       this.flowCrudePipe(dtDays);
       this.treatBattery(dtDays);
+      // Reset the daily refinery sales slot HERE — before clean pipes out.
+      // (updateTrucks also resets it, but runs after flowOilPipe and can
+      //  early-return, which starved pipe sales of a fresh slot.)
+      if (Math.floor(this.market.day) !== this.throughputDay) {
+        this.throughputDay = Math.floor(this.market.day);
+        for (const r of this.buildings) {
+          if (r.kind === "refinery") r.throughputUsed = 0;
+        }
+      }
       this.flowOilPipe(dtDays);
       this.updateTrucks();
       this.tickLightning(dtHours);
