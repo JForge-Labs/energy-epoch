@@ -117,8 +117,9 @@ function drawTerrainDecor(
   }
 }
 
-/** Does a pipe of `kind` connect to whatever asset sits on tile (nx,ny)? */
-function pipeSnapsTo(
+/** Does a pipe of `kind` connect to whatever asset sits on tile (nx,ny)?
+ *  Shared with the Pixi renderer so both draw identical snap runs. */
+export function pipeSnapsTo(
   game: Game,
   nx: number,
   ny: number,

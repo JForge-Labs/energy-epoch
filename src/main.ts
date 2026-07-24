@@ -149,10 +149,13 @@ app.innerHTML = `
 `;
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas")!;
-// Opt into the WebGL/PixiJS renderer with `?pixi`. Canvas 2D stays the default
-// so the proven path is never at risk while the Pixi scaffold reaches parity.
-const USE_PIXI = new URLSearchParams(location.search).has("pixi");
-const ctx = USE_PIXI ? null : canvas.getContext("2d")!;
+// PixiJS (WebGL) is the default renderer (graphics pass: layers + atlas).
+// `?canvas` falls back to the battle-tested Canvas 2D path; old `?pixi` links
+// simply get the default. If Pixi fails to init we drop to Canvas at runtime.
+const USE_CANVAS = new URLSearchParams(location.search).has("canvas");
+let ctx: CanvasRenderingContext2D | null = USE_CANVAS
+  ? canvas.getContext("2d")
+  : null;
 let pixi: PixiRenderer | null = null;
 const hoverTip = document.querySelector<HTMLDivElement>("#hover-tip")!;
 const inspectBody = document.querySelector<HTMLDivElement>("#inspect-body")!;
@@ -401,10 +404,12 @@ let lastPanY = 0;
 let panDist = 0;
 
 function resize() {
-  if (USE_PIXI) {
-    pixi?.resize();
+  if (pixi?.ready) {
+    pixi.resize();
     return;
   }
+  // Canvas 2D path — or Pixi still booting (it sizes its canvas on init).
+  if (!ctx) return;
   const wrap = canvas.parentElement!;
   const dpr = Math.min(window.devicePixelRatio || 1, 3); // 3 = crisp on retina
   canvas.width = Math.floor(wrap.clientWidth * dpr);
@@ -420,8 +425,8 @@ if ("ResizeObserver" in window) {
   ro.observe(canvas.parentElement!);
 }
 
-if (USE_PIXI) {
-  // Lazy-load Pixi so the default canvas bundle stays lightweight.
+if (!USE_CANVAS) {
+  // Lazy-load the Pixi renderer chunk; fall back to Canvas 2D if WebGL dies.
   import("./game/renderPixi")
     .then(({ PixiRenderer }) => {
       pixi = new PixiRenderer(canvas);
@@ -430,7 +435,14 @@ if (USE_PIXI) {
     .then(() => pixi?.resize())
     .catch((err) => {
       console.error("Pixi renderer failed to init:", err);
-      flash("WebGL renderer failed — reload without ?pixi for canvas.");
+      pixi = null;
+      ctx = canvas.getContext("2d");
+      if (ctx) {
+        resize();
+        flash("WebGL unavailable — using the Canvas 2D renderer.");
+      } else {
+        flash("Renderer failed — reload with ?canvas.");
+      }
     });
 }
 

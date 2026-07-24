@@ -7,8 +7,8 @@ Factorio-style energy ops on a **$5M credit facility**. Build **roads** from wel
 ```bash
 cd energy-epoch
 npm install
-npm run dev      # canvas renderer (default)
-# open http://localhost:5173/?pixi  for the WebGL (PixiJS) renderer scaffold
+npm run dev      # PixiJS (WebGL) renderer by default
+# open http://localhost:5173/?canvas  for the Canvas 2D fallback
 npm test         # headless smoke test of the game systems
 npm run build    # typecheck + production build
 ```
@@ -34,7 +34,7 @@ npm run build    # typecheck + production build
 
 ## Renderers
 
-Canvas 2D is the default. A **PixiJS (WebGL)** renderer scaffold is opt-in via `?pixi` — the simulation is renderer-agnostic (`Game.ts` never touches drawing), so it's a swap, not a rewrite. Roadmap: sprites/animation, then mobile.
+**PixiJS (WebGL)** is the default renderer — layered containers + a sprite-atlas pipeline (`src/game/gfx/atlas.ts`; placeholder textures auto-generate until real art lands in `public/atlas/`). Canvas 2D remains as the `?canvas` fallback. The simulation is renderer-agnostic (`Game.ts` never touches drawing).
 
 ## Later
 

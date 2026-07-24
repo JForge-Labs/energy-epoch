@@ -10,7 +10,7 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | G2 | Terrain / pipes / logistics levers stable | doing | Level-up pass in progress |
 | G3 | Persistence reliable (save/load, reset) | doing | localStorage |
 | G4 | Mobile touch UX acceptable (no desktop-only critical path) | todo | Coordinate with playtest |
-| G5 | Pixi path decision (scaffold vs default renderer) | todo | `?pixi` today |
+| G5 | Pixi path decision (scaffold vs default renderer) | doing | Pixi default on `graphics/pixi-atlas-v1` (layers + atlas stub, `?canvas` fallback); soak → real atlas next |
 | G6 | Balance pass for “first 15 min” new player | todo | After loop solid |
 
 ## Path W — ship (planning / when user prioritizes)
