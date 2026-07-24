@@ -13,7 +13,7 @@ export function createCamera(cols: number, rows: number): Camera {
 }
 
 export function clampCamera(cam: Camera, cols: number, rows: number) {
-  cam.zoom = Math.min(2.8, Math.max(0.45, cam.zoom));
+  cam.zoom = Math.min(2.8, Math.max(0.32, cam.zoom));
   cam.x = Math.min(cols - 0.5, Math.max(0.5, cam.x));
   cam.y = Math.min(rows - 0.5, Math.max(0.5, cam.y));
 }

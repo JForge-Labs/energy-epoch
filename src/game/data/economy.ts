@@ -21,6 +21,13 @@ export const CLEAN_DRAIN_MIN_BBL = 5;
 export const BATTERY_TREAT_BBL_PER_DAY = 1_000;
 
 export const FLARE_REP_PER_MCF = 0.002;
+/**
+ * Flaring is expected early — you can't justify a gas plant on one well.
+ * The rep hit scales in with the producing-well count: heavily discounted for
+ * a small operation, ramping to full once you're big enough to be held to it.
+ */
+export const FLARE_GRACE_WELLS = 6;
+export const FLARE_MIN_SCALE = 0.15;
 export const GAS_SALE_REP_PER_MCF = 0.0015;
 export const SPILL_REP_PER_BBL = 0.05;
 export const SPILL_CLEANUP_PER_BBL = 25;
@@ -83,8 +90,8 @@ export const DRILL_DAYS: Record<ZoneTier, number> = {
 };
 
 export const DEFAULT_CONFIG = {
-  cols: 56,
-  rows: 36,
+  cols: 80,
+  rows: 52,
   tileSize: 36,
   startingCash: STARTING_WORKING_CASH,
   tickSeconds: 0.2,

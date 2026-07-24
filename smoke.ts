@@ -18,7 +18,7 @@ const g = new Game();
 const { cols, rows } = g.config;
 
 console.log("map + terrain");
-check("map is 56x36", g.tiles.length === rows && g.tiles[0].length === cols && cols === 56 && rows === 36);
+check("map is 80x52", g.tiles.length === rows && g.tiles[0].length === cols && cols === 80 && rows === 52);
 
 const counts: Record<string, number> = {};
 for (const row of g.tiles) for (const t of row) counts[t.terrain] = (counts[t.terrain] ?? 0) + 1;
@@ -26,6 +26,20 @@ check("has water tiles", (counts.water ?? 0) > 0);
 check("has rock tiles", (counts.rock ?? 0) > 0);
 check("has creek tiles", (counts.creek ?? 0) > 0);
 check("majority open ground/scrub", (counts.ground ?? 0) + (counts.scrub ?? 0) > cols * rows * 0.5);
+
+// Oil districts: plenty of drill-worthy rock, spread across the whole lease so
+// the player always has a next field to develop instead of running dry.
+let goodProspect = 0;
+const oilQuadrants = new Set<string>();
+for (let y = 0; y < rows; y++)
+  for (let x = 0; x < cols; x++) {
+    if (g.tiles[y][x].subsurface.prospect >= 0.55) {
+      goodProspect++;
+      oilQuadrants.add(`${x < cols / 2 ? "W" : "E"}${y < rows / 2 ? "N" : "S"}`);
+    }
+  }
+check("ample drill targets (>250 good+ tiles)", goodProspect > 250);
+check("oil spread across ≥3 quadrants", oilQuadrants.size >= 3);
 
 // Anchor sites cleared to ground; buildings present.
 const battery = g.buildings.find((b) => b.kind === "battery")!;
@@ -475,6 +489,25 @@ try {
   ok2 = false;
 }
 check("restored game ticks without crashing", ok2);
+
+// Cross-size migration: a save from a SMALLER (old 56×36-style) lease must load
+// into the current build, sync config to its own grid, and tick without any
+// out-of-bounds. Guards the "don't wipe the user's old save" requirement.
+console.log("old-lease save migration");
+const oldLease = new Game({ cols: 40, rows: 26 });
+const oldSnap = JSON.parse(JSON.stringify(oldLease.serialize()));
+const g9 = new Game(); // default 80×52
+g9.applyState(oldSnap);
+check("config synced to loaded grid cols", g9.config.cols === 40);
+check("config synced to loaded grid rows", g9.config.rows === 26);
+check("loaded grid dimensions intact", g9.tiles.length === 26 && g9.tiles[0].length === 40);
+let ok9 = true;
+try {
+  for (let i = 0; i < 30; i++) g9.update(0.2);
+} catch {
+  ok9 = false;
+}
+check("migrated old-lease save ticks without crashing", ok9);
 
 console.log(failures === 0 ? "\nALL SMOKE CHECKS PASSED" : `\n${failures} SMOKE CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

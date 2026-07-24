@@ -14,7 +14,12 @@ function zoneFor(dist: number): ZoneTier {
   return 3;
 }
 
-/** Several small oil pockets so a 3×3 survey can show clear hits vs misses */
+/**
+ * A handful of distinct oil DISTRICTS — 4 separated fields, each a tight
+ * cluster of two overlapping pockets so a 3×3 survey reads as a field with a
+ * rich core and leaner edges. Fields are spread across the whole lease so the
+ * player always has a next region to develop instead of running dry.
+ */
 function prospectField(
   x: number,
   y: number,
@@ -22,27 +27,37 @@ function prospectField(
   rows: number,
   seed: number,
 ): number {
-  // Scale pocket sizes with the map so bigger leases aren't mostly barren.
+  // Scale field sizes with the map so bigger leases aren't mostly barren.
   const s = Math.sqrt((cols * rows) / (40 * 24));
-  const pockets = [
-    { cx: cols * 0.22, cy: rows * 0.45, w: 3.2 * s },
-    { cx: cols * 0.48, cy: rows * 0.38, w: 2.6 * s },
-    { cx: cols * 0.62, cy: rows * 0.62, w: 3.0 * s },
-    { cx: cols * 0.35, cy: rows * 0.72, w: 2.4 * s },
-    { cx: cols * 0.78, cy: rows * 0.3, w: 2.8 * s },
-    { cx: cols * 0.55, cy: rows * 0.85, w: 2.6 * s },
+  // Fractional district centers, chosen so one sits near the starter package
+  // (zone 0, early oil) and the rest span outward into higher zones.
+  const districts = [
+    { cx: 0.24, cy: 0.33 }, // near starter — zone 0, early oil
+    { cx: 0.7, cy: 0.24 }, //  NE — zone 1
+    { cx: 0.24, cy: 0.82 }, // SW — zone 1
+    { cx: 0.86, cy: 0.84 }, // SE far — zone 2, richer late-game field
   ];
   let best = 0;
-  for (let i = 0; i < pockets.length; i++) {
-    const p = pockets[i];
-    const jitter = (hash(i + 3, seed, seed) - 0.5) * 2.5;
-    const dx = x - (p.cx + jitter);
-    const dy = y - (p.cy + jitter * 0.6);
-    const fall = Math.exp(-(dx * dx + dy * dy) / (p.w * p.w));
-    best = Math.max(best, fall);
+  for (let d = 0; d < districts.length; d++) {
+    const dd = districts[d];
+    // Per-district jitter so no two maps place a field identically.
+    const jx = (hash(d + 11, seed, seed) - 0.5) * 3.0;
+    const jy = (hash(d + 29, seed, seed) - 0.5) * 3.0;
+    const bx = dd.cx * cols + jx;
+    const by = dd.cy * rows + jy;
+    // Two overlapping pockets give each field an organic, non-circular shape.
+    const cores = [
+      { cx: bx, cy: by, w: 3.8 * s },
+      { cx: bx + 2.6 * s, cy: by + 1.8 * s, w: 3.0 * s },
+    ];
+    for (const p of cores) {
+      const dx = x - p.cx;
+      const dy = y - p.cy;
+      best = Math.max(best, Math.exp(-(dx * dx + dy * dy) / (p.w * p.w)));
+    }
   }
   const noise = hash(x, y, seed) * 0.2;
-  const raw = best * 0.9 + noise * 0.15;
+  const raw = best * 0.92 + noise * 0.12;
   if (raw < 0.28) return raw * 0.5;
   if (raw > 0.55) return Math.min(1, 0.55 + (raw - 0.55) * 1.4);
   return raw;

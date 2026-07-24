@@ -20,6 +20,8 @@ const C = {
   oilPipeCore: "#e8a24a",
   gasPipe: "#4aa892",
   gasPipeCore: "#7fd0bb",
+  pipeDead: "#565049",
+  pipeDeadCore: "#726a5f",
   plant: "#4a8a7a",
   road: "#4a5048",
   roadEdge: "#6a7068",
@@ -115,56 +117,113 @@ function drawTerrainDecor(
   }
 }
 
-/** Draw the pipe segments on a tile as a connected network. */
+/** Does a pipe of `kind` connect to whatever asset sits on tile (nx,ny)? */
+function pipeSnapsTo(
+  game: Game,
+  nx: number,
+  ny: number,
+  kind: "oilPipe" | "gasPipe",
+): boolean {
+  const nb = game.tiles[ny]?.[nx];
+  if (!nb) return false;
+  const b = game.buildingAt(nx, ny);
+  if (kind === "oilPipe") {
+    return (
+      b?.kind === "battery" ||
+      b?.kind === "refinery" ||
+      b?.kind === "wellhead_tank"
+    );
+  }
+  // Gas pipes tie a wellhead (the gas source) into a plant / gas line.
+  if (b?.kind === "gas_plant" || b?.kind === "gas_line") return true;
+  return nb.wellId != null;
+}
+
+/**
+ * Draw the pipe on a tile as a connected network. Runs reach into any pipe
+ * neighbor AND snap into the assets they serve (no gaps). A line wired to its
+ * sink (battery/refinery for oil, gas plant for gas) is "live": bright with an
+ * animated flow; an unconnected stub reads dim/grey so dead lines stand out.
+ */
 function drawPipeTile(
   ctx: CanvasRenderingContext2D,
-  tiles: Tile[][],
+  game: Game,
   x: number,
   y: number,
   px: number,
   py: number,
   size: number,
   kind: "oilPipe" | "gasPipe",
+  time: number,
 ) {
+  const tiles = game.tiles;
   const tile = tiles[y][x];
   if (!tile[kind]) return;
   const cx = px + size / 2;
   const cy = py + size / 2;
-  const casing = kind === "oilPipe" ? C.oilPipe : C.gasPipe;
-  const core = kind === "oilPipe" ? C.oilPipeCore : C.gasPipeCore;
-  const outer = Math.max(4, size * 0.26);
-  const inner = Math.max(2, size * 0.13);
+  const live =
+    kind === "oilPipe"
+      ? game.oilConnectedTiles.has(`${x},${y}`)
+      : game.gasConnectedTiles.has(`${x},${y}`);
+  const casing = live ? (kind === "oilPipe" ? C.oilPipe : C.gasPipe) : C.pipeDead;
+  const core = live
+    ? kind === "oilPipe"
+      ? C.oilPipeCore
+      : C.gasPipeCore
+    : C.pipeDeadCore;
+  // Slimmer than before — cleans up the map when lines run everywhere.
+  const outer = Math.max(2.5, size * 0.15);
+  const inner = Math.max(1.4, size * 0.07);
   const neighbors: [number, number][] = [
     [1, 0],
     [-1, 0],
     [0, 1],
     [0, -1],
   ];
-  const drawRun = (w: number, color: string) => {
+  // Directions that carry a run: a pipe neighbor, or an asset to snap into.
+  const dirs: [number, number][] = [];
+  for (const [dx, dy] of neighbors) {
+    const nb = tiles[y + dy]?.[x + dx];
+    if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind)) {
+      dirs.push([dx, dy]);
+    }
+  }
+
+  const runs = (w: number, color: string) => {
     ctx.strokeStyle = color;
     ctx.lineWidth = w;
-    ctx.lineCap = "round";
-    let connected = false;
-    for (const [dx, dy] of neighbors) {
-      const nb = tiles[y + dy]?.[x + dx];
-      if (nb && nb[kind]) {
-        connected = true;
+    if (dirs.length) {
+      for (const [dx, dy] of dirs) {
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(cx + (dx * size) / 2, cy + (dy * size) / 2);
         ctx.stroke();
       }
-    }
-    // Lone node still reads as pipe (a stub / endpoint).
-    if (!connected) {
+    } else {
       ctx.beginPath();
       ctx.arc(cx, cy, w * 0.5, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
     }
   };
-  drawRun(outer, casing);
-  drawRun(inner, core);
+
+  // Casing: solid, rounded joins.
+  ctx.lineCap = "round";
+  ctx.setLineDash([]);
+  runs(outer, casing);
+
+  // Core: on a live line, marching dashes read as product flowing to the sink.
+  if (live && dirs.length) {
+    const dash = Math.max(3, size * 0.2);
+    ctx.lineCap = "butt";
+    ctx.setLineDash([dash, dash]);
+    ctx.lineDashOffset = -((time * 0.05) % (dash * 2));
+  } else {
+    ctx.lineCap = "round";
+    ctx.setLineDash([]);
+  }
+  runs(inner, core);
+  ctx.setLineDash([]);
 }
 
 function prospectOverlay(tile: Tile): string | null {
@@ -311,7 +370,7 @@ function drawBuilding(
       break;
     }
     case "battery": {
-      // Scale to footprint (1×2 by default): crude tank + clean tank across the width.
+      // Scale to footprint (2×2 by default): crude tank + clean tank across the width.
       const sw = size * (b.w ?? 1) - pad * 2;
       const sh = size * (b.h ?? 1) - pad * 2;
       ctx.fillStyle = C.battery;
@@ -399,20 +458,56 @@ function drawUnit(
     ctx.font = `${Math.floor(size * 0.28)}px monospace`;
     ctx.fillText(`T${u.tier}`, px + size * 0.3, py + size * 0.55);
   } else {
-    ctx.fillStyle = C.truck;
-    ctx.fillRect(px + size * 0.15, py + size * 0.3, size * 0.7, size * 0.4);
-    ctx.fillStyle = C.select;
-    ctx.font = `bold ${Math.max(9, Math.floor(size * 0.2))}px monospace`;
-    ctx.fillText("TRUCK", px + size * 0.18, py + size * 0.25);
-    if (u.cargo > 0) {
-      ctx.fillStyle = u.cargoKind === "clean" ? "#c8b070" : "#1a1008";
-      ctx.fillRect(
-        px + size * 0.2,
-        py + size * 0.35,
-        size * 0.4 * (u.cargo / u.cargoCap),
-        size * 0.3,
-      );
+    // A top-down tanker: trailer + cab + wheels, pointed along its heading.
+    let hx = 1;
+    let hy = 0;
+    if (u.path && u.path.length) {
+      const ddx = u.path[0].x - u.x;
+      const ddy = u.path[0].y - u.y;
+      if (Math.abs(ddx) > 0.01 || Math.abs(ddy) > 0.01) {
+        const m = Math.hypot(ddx, ddy);
+        hx = ddx / m;
+        hy = ddy / m;
+      }
     }
+    ctx.save();
+    ctx.translate(px + size / 2, py + size / 2);
+    ctx.rotate(Math.atan2(hy, hx));
+    const L = size * 0.82;
+    const W = size * 0.42;
+    const wheel = Math.max(1.4, size * 0.07);
+    // Wheels (drawn first so the body sits over them).
+    ctx.fillStyle = "#14171b";
+    for (const wx of [-L * 0.28, L * 0.04, L * 0.26]) {
+      ctx.beginPath();
+      ctx.arc(wx, -W * 0.52, wheel, 0, Math.PI * 2);
+      ctx.arc(wx, W * 0.52, wheel, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Trailer (the tank body).
+    ctx.fillStyle = C.truck;
+    ctx.strokeStyle = "#39414b";
+    ctx.lineWidth = Math.max(1, size * 0.03);
+    ctx.beginPath();
+    ctx.rect(-L * 0.44, -W * 0.5, L * 0.56, W);
+    ctx.fill();
+    ctx.stroke();
+    // Cargo level fills the tank from the rear; tint by product.
+    if (u.cargo > 0 && u.cargoCap > 0) {
+      const frac = Math.min(1, u.cargo / u.cargoCap);
+      ctx.fillStyle = u.cargoKind === "clean" ? "#c8b070" : "#241609";
+      ctx.fillRect(-L * 0.42, -W * 0.38, L * 0.52 * frac, W * 0.76);
+    }
+    // Cab up front.
+    ctx.fillStyle = "#5c6672";
+    ctx.beginPath();
+    ctx.rect(L * 0.14, -W * 0.42, L * 0.26, W * 0.84);
+    ctx.fill();
+    ctx.stroke();
+    // Windshield glint.
+    ctx.fillStyle = "#add4e4";
+    ctx.fillRect(L * 0.32, -W * 0.3, L * 0.06, W * 0.6);
+    ctx.restore();
   }
   if (selected) {
     ctx.strokeStyle = C.select;
@@ -429,6 +524,7 @@ export function renderGame(
   hover: { x: number; y: number } | null,
 ) {
   const { cols, rows, tileSize } = game.config;
+  const time = performance.now();
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
   for (let y = 0; y < rows; y++) {
@@ -475,8 +571,8 @@ export function renderGame(
       ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
 
-      drawPipeTile(ctx, game.tiles, x, y, px, py, size, "oilPipe");
-      drawPipeTile(ctx, game.tiles, x, y, px, py, size, "gasPipe");
+      drawPipeTile(ctx, game, x, y, px, py, size, "oilPipe", time);
+      drawPipeTile(ctx, game, x, y, px, py, size, "gasPipe", time);
     }
   }
 

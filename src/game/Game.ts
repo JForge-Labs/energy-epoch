@@ -165,8 +165,10 @@ export class Game {
   private oilBatteryLinks = new Map<string, string[]>();
   /** Wellhead-tank id → battery ids it's crude-pipe-connected to (recomputed). */
   private crudeTankLinks = new Map<string, string[]>();
-  /** Gas-pipe tiles reachable from a gas plant (keys "x,y"). */
-  private gasConnectedTiles = new Set<string>();
+  /** Gas-pipe tiles reachable from a gas plant (keys "x,y"). Live = gas flowing. */
+  gasConnectedTiles = new Set<string>();
+  /** Oil-pipe tiles wired to a battery network (keys "x,y"). Live = oil flowing. */
+  oilConnectedTiles = new Set<string>();
   private pipeOilBucket = 0;
   /** Running total of bbl treated this calendar day (for SCADA). */
   private treatAccToday = 0;
@@ -2167,6 +2169,7 @@ export class Game {
     this.oilConnected = false;
     this.oilBatteryLinks.clear();
     this.crudeTankLinks.clear();
+    this.oilConnectedTiles.clear();
     const batteries = this.buildings.filter((b) => b.kind === "battery");
     const refineries = this.buildings.filter((b) => b.kind === "refinery");
     const tanks = this.buildings.filter(
@@ -2224,6 +2227,8 @@ export class Game {
           this.oilBatteryLinks.set(battery.id, [...reachedRefs]);
           this.oilConnected = true;
         }
+        // Every pipe tile wired to a battery reads as a live oil line.
+        for (const k of seen) this.oilConnectedTiles.add(k);
       }
     }
 
@@ -2674,6 +2679,12 @@ export class Game {
   /** Restore state produced by serialize() into this instance. */
   applyState(s: GameSnapshot) {
     this.tiles = s.tiles;
+    // Saves carry their own grid; sync config to it so a save made on a
+    // different map size (e.g. the old 56×36 lease) never reads out of bounds.
+    if (s.tiles.length && s.tiles[0]?.length) {
+      this.config.cols = s.tiles[0].length;
+      this.config.rows = s.tiles.length;
+    }
     this.wells = s.wells;
     this.buildings = s.buildings;
     this.units = s.units;

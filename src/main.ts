@@ -472,7 +472,9 @@ function disarmToSelect() {
 
 const SAVE_PREFIX = "energy-epoch-save";
 const PROFILES_KEY = "energy-epoch-profiles";
-// Bump on state-schema changes: 2 footprints, 3 terrain+pipes, 4 map 56×36.
+// Bump on state-schema changes: 2 footprints, 3 terrain+pipes, 4 map+pipes.
+// Map size lives in the save's own grid (applyState syncs config to it), so a
+// bigger default map needs no version bump — old saves keep their lease size.
 const SAVE_VERSION = 4;
 
 let currentSpeed = 1;
@@ -537,13 +539,15 @@ function loadGame(): boolean {
     if (!raw) return false;
     const snap = JSON.parse(raw);
     if (snap.v !== SAVE_VERSION || !snap.game) return false;
-    // Dimension guard: ignore saves that don't match the current map size.
+    // Validity guard: reject only structurally-broken grids. Any well-formed
+    // grid loads regardless of size — applyState syncs config to the saved
+    // lease, so a save made on the old 56×36 map still opens (and survives).
     const t = snap.game.tiles;
     if (
       !Array.isArray(t) ||
-      t.length !== game.config.rows ||
+      t.length === 0 ||
       !Array.isArray(t[0]) ||
-      t[0].length !== game.config.cols
+      t[0].length === 0
     ) {
       return false;
     }

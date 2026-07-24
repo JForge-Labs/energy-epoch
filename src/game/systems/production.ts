@@ -1,5 +1,7 @@
 import type { Building, PlayerState, Well } from "../types";
 import {
+  FLARE_GRACE_WELLS,
+  FLARE_MIN_SCALE,
   FLARE_REP_PER_MCF,
   GAS_SALE_REP_PER_MCF,
   SPILL_CLEANUP_PER_BBL,
@@ -46,6 +48,17 @@ export function simulateProduction(
     messages: [],
     cleanups: [],
   };
+
+  // Flaring is expected while you're small — you can't justify gas takeaway on
+  // one or two wells. Discount the rep hit heavily for a low well count and
+  // ramp it to full once the operation is big enough to be held to standard.
+  const producingWells = wells.filter(
+    (w) => w.status === "producing" && !w.choked,
+  ).length;
+  const flareRepScale = Math.min(
+    1,
+    Math.max(FLARE_MIN_SCALE, producingWells / FLARE_GRACE_WELLS),
+  );
 
   for (const well of wells) {
     if (well.status !== "producing") continue;
@@ -121,7 +134,7 @@ export function simulateProduction(
       } else {
         const tankFull = tank && tank.oil >= tank.oilCap - 0.01;
         const flareMul = tankFull ? 2.2 : 1;
-        const repHit = gas * FLARE_REP_PER_MCF * flareMul;
+        const repHit = gas * FLARE_REP_PER_MCF * flareMul * flareRepScale;
         player.reputation = Math.max(0, player.reputation - repHit);
         result.gasFlared += gas;
         if (tankFull && Math.random() < 0.08) {
