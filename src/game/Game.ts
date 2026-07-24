@@ -238,7 +238,7 @@ export class Game {
       online: true,
       hp: 100,
       w: 2,
-      h: 1,
+      h: 2,
     });
 
     this.buildings.push({
@@ -281,7 +281,7 @@ export class Game {
       id: uid("trk"),
       kind: "truck",
       x: batt.x,
-      y: batt.y + 1,
+      y: batt.y + 2,
       path: [],
       cargo: 0,
       cargoCap: TRUCK_CAP_BBL,
@@ -293,7 +293,10 @@ export class Game {
       tier: 0,
     });
 
-    this.tiles[batt.y + 1][batt.x].hasRoad = true;
+    // A short staging apron below the 2×2 battery so the starter truck (and
+    // later arrivals) line up on receiving/shipping lanes rather than stacking.
+    this.tiles[batt.y + 2][batt.x].hasRoad = true;
+    this.tiles[batt.y + 2][batt.x + 1].hasRoad = true;
     this.selectedUnitId = this.units[0].id;
   }
 
@@ -398,6 +401,32 @@ export class Game {
       }
     }
     return best;
+  }
+
+  /**
+   * A distinct passable staging tile on a building's perimeter, so idle trucks
+   * line up along its lanes (shipping/receiving) instead of stacking on one tile.
+   */
+  private stagingTileFor(b: Building, index: number): { x: number; y: number } | null {
+    const w = b.w ?? 1;
+    const h = b.h ?? 1;
+    const perim: { x: number; y: number }[] = [];
+    for (let dy = -1; dy <= h; dy++) {
+      for (let dx = -1; dx <= w; dx++) {
+        const inside = dx >= 0 && dx < w && dy >= 0 && dy < h;
+        if (inside) continue;
+        // Cardinal edges only (skip diagonal corners), stable clockwise-ish order.
+        const cardinal = (dx >= 0 && dx < w) || (dy >= 0 && dy < h);
+        if (!cardinal) continue;
+        const x = b.x + dx;
+        const y = b.y + dy;
+        if (x < 0 || y < 0 || x >= this.config.cols || y >= this.config.rows) continue;
+        if (!this.truckPassable(x, y)) continue;
+        perim.push({ x, y });
+      }
+    }
+    if (!perim.length) return null;
+    return perim[index % perim.length];
   }
 
   /** Does building b's footprint cover tile (x,y)? */
@@ -761,7 +790,7 @@ export class Game {
       this.message = `Battery costs $${BATTERY_COST.toLocaleString()}.`;
       return false;
     }
-    if (!this.footprintClear(x, y, 2, 1)) return false;
+    if (!this.footprintClear(x, y, 2, 2)) return false;
     this.player.cash -= BATTERY_COST;
     this.player.opexToday += BATTERY_COST;
     this.ledger.push(this.market.day, "capex", `Battery ${x},${y}`, -BATTERY_COST);
@@ -780,7 +809,7 @@ export class Game {
       online: true,
       hp: 100,
       w: 2,
-      h: 1,
+      h: 2,
     });
     this.linkToRoadNetwork(x, y);
     this.pipesDirty = true;
@@ -2061,8 +2090,16 @@ export class Game {
         this.guide = "Lay ROAD or OIL PIPE: battery → refinery so clean can leave.";
       }
 
-      const park = this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y));
-      if (park && !atBldg(truck, park)) assignPath(truck, park.x, park.y);
+      // Stage idle trucks on distinct battery-perimeter lanes so they line up
+      // near the next pickup instead of stacking on the anchor tile.
+      const parkBat = this.nearestOf("battery", Math.round(truck.x), Math.round(truck.y));
+      if (parkBat) {
+        const idx = this.units.filter((u) => u.kind === "truck").indexOf(truck);
+        const spot = this.stagingTileFor(parkBat, idx) ?? { x: parkBat.x, y: parkBat.y };
+        if (!(Math.round(truck.x) === spot.x && Math.round(truck.y) === spot.y)) {
+          assignPath(truck, spot.x, spot.y);
+        }
+      }
       truck.job = "idle";
       truck.busy = false;
     }

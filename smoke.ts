@@ -30,7 +30,7 @@ check("majority open ground/scrub", (counts.ground ?? 0) + (counts.scrub ?? 0) >
 // Anchor sites cleared to ground; buildings present.
 const battery = g.buildings.find((b) => b.kind === "battery")!;
 const refinery = g.buildings.find((b) => b.kind === "refinery")!;
-check("battery placed", !!battery && battery.w === 2 && battery.h === 1);
+check("battery placed", !!battery && battery.w === 2 && battery.h === 2);
 check("refinery placed 2x2", !!refinery && refinery.w === 2 && refinery.h === 2);
 check("battery tile is buildable", !blocksBuild(g.tiles[battery.y][battery.x].terrain));
 check("refinery tile is buildable", !blocksBuild(g.tiles[refinery.y][refinery.x].terrain));
@@ -144,9 +144,9 @@ console.log("add-tank + crude pipe");
 {
   g.player.cash = 5_000_000;
   const bat = g.buildings.find((b) => b.kind === "battery")!;
-  // A wellhead tank two tiles below the battery, linked by one oil-pipe tile.
+  // A wellhead tank below the 2×2 battery, linked by one oil-pipe tile.
   const tx = bat.x;
-  const ty = bat.y + 2;
+  const ty = bat.y + 3;
   const tank: Building = {
     id: "tanktest",
     kind: "wellhead_tank",
@@ -172,8 +172,8 @@ console.log("add-tank + crude pipe");
   check("add tank caps at 1600", tank.oilCap === 1600);
   check("add tank refuses past max", !g.addTank(tx, ty));
 
-  // Link tank → battery with an oil pipe tile between them.
-  g.layPipe(bat.x, bat.y + 1, "oil");
+  // Link tank → battery with an oil pipe tile between them (below the footprint).
+  g.layPipe(bat.x, bat.y + 2, "oil");
   const oilBefore = tank.oil;
   const crudeBefore = bat.crude;
   g.update(0.2);
@@ -186,7 +186,7 @@ console.log("add-tank + crude pipe");
     id: "tanktest2",
     kind: "wellhead_tank",
     x: bat.x + 1,
-    y: bat.y + 2,
+    y: bat.y + 3,
     oil: 500,
     oilCap: 800,
     crude: 0,
@@ -198,7 +198,7 @@ console.log("add-tank + crude pipe");
     hp: 100,
   };
   g.buildings.push(tank2);
-  g.layPipe(bat.x + 1, bat.y + 1, "oil");
+  g.layPipe(bat.x + 1, bat.y + 2, "oil");
   tank.oil = 500;
   const drainBefore = tank.oil + tank2.oil;
   g.update(0.2);
