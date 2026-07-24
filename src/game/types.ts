@@ -98,6 +98,9 @@ export type TruckJob =
 
 export type CargoKind = "none" | "crude" | "clean";
 
+/** Player-assignable truck duty: auto (both), crude-only, or clean-only. */
+export type CargoMode = "auto" | "crude" | "clean";
+
 export interface Unit {
   id: string;
   kind: UnitKind;
@@ -112,6 +115,8 @@ export interface Unit {
   targetBuildingId: string | null;
   job: TruckJob;
   tier: number;
+  /** Truck duty assignment; undefined = auto. */
+  cargoMode?: CargoMode;
 }
 
 export interface MarketState {

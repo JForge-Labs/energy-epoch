@@ -309,6 +309,70 @@ console.log("small truck + interest toggle");
   check("interest toggle off stops the debt drain", netEasy > netHard + 100);
 }
 
+console.log("trucks haul clean to the refinery");
+{
+  // Regression for the clean-haul starvation bug: with clean in the battery and
+  // a road to the refinery, a truck must sell it (totalOilSold grows).
+  const g4 = new Game();
+  const bat = g4.buildings.find((b) => b.kind === "battery")!;
+  const ref = g4.buildings.find((b) => b.kind === "refinery")!;
+  let cx = bat.x;
+  let cy = bat.y;
+  g4.tiles[cy][cx].hasRoad = true;
+  let guard = 0;
+  while ((cx !== ref.x || cy !== ref.y) && guard++ < 250) {
+    if (cx !== ref.x) cx += Math.sign(ref.x - cx);
+    else cy += Math.sign(ref.y - cy);
+    g4.tiles[cy][cx].hasRoad = true;
+  }
+  bat.clean = 800;
+  for (let i = 0; i < 400; i++) g4.update(0.2);
+  check("clean oil reaches the refinery (sales happen)", g4.totalOilSold > 0);
+}
+
+console.log("biggest-need + triage");
+{
+  // Full clean must ship even when a ready (full) wellhead competes.
+  const g5 = new Game();
+  const bat = g5.buildings.find((b) => b.kind === "battery")!;
+  const ref = g5.buildings.find((b) => b.kind === "refinery")!;
+  let cx = bat.x;
+  let cy = bat.y;
+  g5.tiles[cy][cx].hasRoad = true;
+  let guard = 0;
+  while ((cx !== ref.x || cy !== ref.y) && guard++ < 250) {
+    if (cx !== ref.x) cx += Math.sign(ref.x - cx);
+    else cy += Math.sign(ref.y - cy);
+    g5.tiles[cy][cx].hasRoad = true;
+  }
+  g5.tiles[bat.y + 1][bat.x].hasRoad = true;
+  g5.buildings.push({
+    id: "tkfull",
+    kind: "wellhead_tank",
+    x: bat.x,
+    y: bat.y + 1,
+    oil: 400,
+    oilCap: 400,
+    crude: 0,
+    crudeCap: 0,
+    clean: 0,
+    cleanCap: 0,
+    wellId: null,
+    online: true,
+    hp: 100,
+  });
+  bat.clean = bat.cleanCap;
+  for (let i = 0; i < 400; i++) g5.update(0.2);
+  check("full clean ships even with a ready wellhead competing", g5.totalOilSold > 0);
+
+  // Triage flags clean-full with no road to a refinery.
+  const g6 = new Game();
+  const bat6 = g6.buildings.find((b) => b.kind === "battery")!;
+  bat6.clean = bat6.cleanCap;
+  const t = g6.triage();
+  check("triage flags clean-full + no road as critical", t.level === "crit" && /road/i.test(t.msg));
+}
+
 console.log("save round-trip");
 const snap = JSON.parse(JSON.stringify(g.serialize()));
 const g2 = new Game();

@@ -125,6 +125,73 @@ body {
   color: var(--text-dim);
 }
 
+/* Triage HUD — left, below Inspect. Drives the player to the biggest problem. */
+.triage-panel {
+  position: absolute;
+  left: 0.75rem;
+  top: 6.9rem;
+  z-index: 6;
+  width: min(320px, 70vw);
+  padding: 0.5rem 0.65rem;
+  background: rgba(16, 20, 18, 0.92);
+  border: 1px solid var(--bg-panel-edge);
+  border-left-width: 3px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.triage-panel[data-level="ok"] {
+  border-left-color: var(--ok);
+}
+
+.triage-panel[data-level="warn"] {
+  border-left-color: var(--amber-hot);
+}
+
+.triage-panel[data-level="crit"] {
+  border-left-color: var(--danger);
+}
+
+.triage-title {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.triage-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--steel-dim);
+  flex: 0 0 auto;
+}
+
+.triage-panel[data-level="ok"] .triage-dot {
+  background: var(--ok);
+}
+
+.triage-panel[data-level="warn"] .triage-dot {
+  background: var(--amber-hot);
+  box-shadow: 0 0 5px var(--amber-hot);
+}
+
+.triage-panel[data-level="crit"] .triage-dot {
+  background: var(--danger);
+  box-shadow: 0 0 6px var(--danger);
+}
+
+.triage-panel[data-level="crit"] .triage-msg {
+  color: var(--amber-hot);
+  font-weight: 600;
+}
+
 .inspect-title {
   font-family: var(--font-display);
   font-size: 0.95rem;
@@ -559,21 +626,23 @@ body {
 .bottom-bar {
   display: flex;
   flex-wrap: wrap;
-  align-items: stretch;
-  gap: 0.5rem;
-  padding: 0.65rem 1rem;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--bg-panel-edge);
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem 0.45rem;
+  padding: 0.4rem 0.75rem;
+  background: linear-gradient(0deg, rgba(14, 18, 15, 0.6), rgba(14, 18, 15, 0));
+  backdrop-filter: blur(2px);
+  border-top: none;
 }
 
 .tool-btn {
   appearance: none;
   border: 1px solid var(--bg-panel-edge);
-  background: #141916;
+  background: rgba(20, 25, 22, 0.82);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
-  padding: 0.55rem 0.85rem;
+  font-size: 0.68rem;
+  padding: 0.32rem 0.55rem;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
@@ -599,10 +668,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
   min-width: 0;
-  padding-left: 0.6rem;
-  border-left: 1px solid var(--bg-panel-edge);
+  padding-left: 0.45rem;
+  border-left: 1px solid rgba(90, 106, 94, 0.28);
 }
 
 .tool-group[data-group="mode"] {
@@ -610,21 +679,22 @@ body {
   border-left: none;
 }
 
+/* Inline group caption (not a full row) keeps the bar compact. */
 .tool-group-label {
-  flex-basis: 100%;
-  font-size: 0.56rem;
+  font-size: 0.54rem;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.08em;
   color: var(--steel-dim);
+  margin-right: 0.1rem;
 }
 
 /* Showcase action buttons (verbs) — larger and amber. */
 .tool-btn.action {
-  font-size: 0.86rem;
-  padding: 0.62rem 0.95rem;
+  font-size: 0.78rem;
+  padding: 0.44rem 0.7rem;
   font-weight: 600;
   border-color: var(--amber);
-  background: linear-gradient(180deg, #2a2416, #1b1d14);
+  background: linear-gradient(180deg, rgba(42, 36, 22, 0.92), rgba(27, 29, 20, 0.92));
   color: var(--amber-hot);
 }
 
@@ -638,12 +708,12 @@ body {
 }
 
 .tool-meta {
-  margin-left: auto;
+  flex-basis: 100%;
   align-self: center;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   color: var(--text-dim);
-  max-width: 28rem;
-  text-align: right;
+  text-align: center;
+  margin-top: 0.1rem;
 }
 
 .toast {

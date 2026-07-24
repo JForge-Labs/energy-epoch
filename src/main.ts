@@ -1,5 +1,5 @@
 import "./styles.css";
-import { clampCamera, createCamera } from "./game/camera";
+import { clampCamera, createCamera, screenToWorld } from "./game/camera";
 import { Game } from "./game/Game";
 import {
   ADD_TANK_COST,
@@ -75,6 +75,10 @@ app.innerHTML = `
       <div id="inspect-body">Hover tiles · Right-click for actions</div>
       <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span> · Roads need N/E/S/W edges</div>
     </div>
+    <div class="triage-panel" id="triage-panel" data-level="ok">
+      <div class="triage-title"><span class="triage-dot"></span>Next bottleneck</div>
+      <div class="triage-msg" id="triage-msg">—</div>
+    </div>
     <div class="dash-panel scada" id="dash-panel">
       <div class="inspect-title">Process</div>
       <div id="dash-body">—</div>
@@ -102,7 +106,6 @@ app.innerHTML = `
     </div>
   </div>
   <footer class="bottom-bar">
-    <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay · Right-click for actions · Click a panel title (or C) to collapse</div>
     <div class="tool-group" data-group="mode">
       <button class="tool-btn active" data-tool="select" type="button">Select</button>
     </div>
@@ -153,6 +156,8 @@ const dashBody = document.querySelector<HTMLDivElement>("#dash-body")!;
 const ledgerBody = document.querySelector<HTMLDivElement>("#ledger-body")!;
 const dashPanel = document.querySelector<HTMLDivElement>("#dash-panel")!;
 const ledgerPanel = document.querySelector<HTMLDivElement>("#ledger-panel")!;
+const triagePanel = document.querySelector<HTMLDivElement>("#triage-panel")!;
+const triageMsg = document.querySelector<HTMLDivElement>("#triage-msg")!;
 const guideBar = document.querySelector<HTMLDivElement>("#guide-bar")!;
 const confirmBanner = document.querySelector<HTMLDivElement>("#confirm-banner")!;
 const gameoverEl = document.querySelector<HTMLDivElement>("#gameover")!;
@@ -920,6 +925,11 @@ let downClientY = 0;
 let downTile: { x: number; y: number } | null = null;
 let dragKind: "pan" | "paint" | null = null;
 let lastPaintTile: { x: number; y: number } | null = null;
+// Two-finger pinch-zoom (mobile). Tracks live pointers; a second finger
+// cancels any single-pointer drag and enters a smooth pinch gesture.
+const activePointers = new Map<number, { x: number; y: number }>();
+let pinching = false;
+let pinchDist = 0;
 // Touch/pen have no right-click; a long-press opens the action menu instead.
 let longPressTimer = 0;
 let longPressFired = false;
@@ -931,6 +941,19 @@ function cancelLongPress() {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size >= 2) {
+    // Second finger down → pinch. Abort any single-pointer gesture cleanly.
+    pinching = true;
+    leftDown = false;
+    panning = false;
+    dragKind = null;
+    cancelLongPress();
+    closeContextMenu();
+    const pts = [...activePointers.values()];
+    pinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1;
+    return;
+  }
   if (e.button === 1 || e.button === 2) {
     panning = true;
     panButton = e.button;
@@ -966,6 +989,28 @@ canvas.addEventListener("pointerdown", (e) => {
 
 canvas.addEventListener("pointermove", (e) => {
   const rect = canvas.getBoundingClientRect();
+
+  if (activePointers.has(e.pointerId)) {
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
+  // Two-finger pinch: zoom around the finger midpoint (fractional world anchor
+  // keeps it smooth instead of snapping to whole tiles).
+  if (pinching && activePointers.size >= 2) {
+    const pts = [...activePointers.values()];
+    const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1;
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+    const ts = game.config.tileSize;
+    const before = screenToWorld(cam, canvas, midX, midY, ts);
+    cam.zoom *= dist / pinchDist;
+    clampCamera(cam, game.config.cols, game.config.rows);
+    const after = screenToWorld(cam, canvas, midX, midY, ts);
+    cam.x += before.wx - after.wx;
+    cam.y += before.wy - after.wy;
+    clampCamera(cam, game.config.cols, game.config.rows);
+    pinchDist = dist;
+    return;
+  }
 
   // Middle/right-button pan
   if (panning) {
@@ -1023,6 +1068,7 @@ canvas.addEventListener("pointermove", (e) => {
 
     if (dragKind === "paint") {
       const t = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
+      if (t) hover = t; // snap the tile highlight to the cursor while laying
       if (
         t &&
         (!lastPaintTile || t.x !== lastPaintTile.x || t.y !== lastPaintTile.y)
@@ -1050,6 +1096,19 @@ canvas.addEventListener("pointermove", (e) => {
 });
 
 canvas.addEventListener("pointerup", (e) => {
+  const wasPinching = pinching;
+  activePointers.delete(e.pointerId);
+  if (activePointers.size < 2) pinching = false;
+  if (wasPinching) {
+    // Ending a pinch — the lifted finger must not fire a click/pan.
+    leftDown = false;
+    panning = false;
+    dragKind = null;
+    lastPaintTile = null;
+    longPressFired = false;
+    return;
+  }
+
   if (panning && e.button === panButton) {
     // Right-click without drag = open the context action menu
     if (panButton === 2 && panDist <= DRAG_THRESHOLD) {
@@ -1073,6 +1132,13 @@ canvas.addEventListener("pointerup", (e) => {
     dragKind = null;
     lastPaintTile = null;
   }
+});
+canvas.addEventListener("pointercancel", (e) => {
+  activePointers.delete(e.pointerId);
+  if (activePointers.size < 2) pinching = false;
+  cancelLongPress();
+  leftDown = false;
+  dragKind = null;
 });
 canvas.addEventListener("pointerleave", () => {
   hover = null;
@@ -1157,6 +1223,15 @@ function openContextMenu(
   }
   if (!tt.surveyed) {
     items.push({ label: `Explore here (${k(EXPLORE_COST)})`, act: () => game.buyExploration(tile.x, tile.y) });
+  }
+  const truckHere = game.units.find(
+    (u) => u.kind === "truck" && Math.round(u.x) === tile.x && Math.round(u.y) === tile.y,
+  );
+  if (truckHere) {
+    const mode = truckHere.cargoMode ?? "auto";
+    if (mode !== "auto") items.push({ label: "Truck → Auto (both)", act: () => game.setTruckMode(truckHere.id, "auto") });
+    if (mode !== "crude") items.push({ label: "Truck → Crude only", act: () => game.setTruckMode(truckHere.id, "crude") });
+    if (mode !== "clean") items.push({ label: "Truck → Clean only", act: () => game.setTruckMode(truckHere.id, "clean") });
   }
   const onStructure = well || (b && b.kind !== "gas_flare");
   if (!onStructure) {
@@ -1248,6 +1323,8 @@ function syncDash() {
   if (!dashPanel.classList.contains("panel-collapsed")) updateScada(d);
   if (!ledgerPanel.classList.contains("panel-collapsed")) updateTicker(d);
   if (!ledgerModal.hidden) renderLedgerModal();
+  triagePanel.dataset.level = d.triage.level;
+  triageMsg.textContent = d.triage.msg;
   guideBar.textContent = d.guide;
 
   if (d.gameOver) {
