@@ -364,7 +364,15 @@ export class PixiRenderer {
     }
   }
 
-  /** Stamp one chunk: terrain/road/pad + survey tint + special + pip. */
+  /**
+   * Stamp one chunk: terrain/road/pad + survey tint + special + pip.
+   *
+   * Two passes on purpose: Pixi Graphics can leave fill/alpha state after a
+   * semi-transparent survey rect that tints later `texture()` stamps in the
+   * same chunk. That looked like "explore darkens outside the 3×3" — the rest
+   * of the 16×16 chunk after the first surveyed tile in row-major order.
+   * Base terrain first (opaque textures only), then survey overlays.
+   */
   private stampChunk(
     game: Game,
     chunk: TerrainChunk,
@@ -374,6 +382,8 @@ export class PixiRenderer {
   ): void {
     const g = chunk.g;
     g.clear();
+
+    // Pass 1 — opaque base stamps only.
     for (let y = chunk.y0; y < yEnd; y++) {
       for (let x = chunk.x0; x < xEnd; x++) {
         const tile = game.tiles[y][x];
@@ -383,11 +393,17 @@ export class PixiRenderer {
           : tile.isPad
             ? "infra.pad"
             : terrainFrame(tile.terrain, even);
+        g.texture(texFor(frame), 0xffffff, x * ts, y * ts, ts, ts);
+      }
+    }
+
+    // Pass 2 — survey tints + pips only on surveyed tiles.
+    for (let y = chunk.y0; y < yEnd; y++) {
+      for (let x = chunk.x0; x < xEnd; x++) {
+        const tile = game.tiles[y][x];
+        if (!tile.surveyed) continue;
         const px = x * ts;
         const py = y * ts;
-        g.texture(texFor(frame), 0xffffff, px, py, ts, ts);
-
-        if (!tile.surveyed) continue;
         const ov = prospectOverlay(tile.subsurface.prospect);
         if (ov) g.rect(px, py, ts, ts).fill({ color: ov.c, alpha: ov.a });
         if (tile.subsurface.special) {
