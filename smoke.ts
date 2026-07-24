@@ -293,18 +293,20 @@ console.log("small truck + interest toggle");
   g.buyTruck(200, 50_000);
   const trucks = g.units.filter((u) => u.kind === "truck");
   check("bought a 200 bbl truck", trucks[trucks.length - 1].cargoCap === 200);
+  check("interest (hard mode) defaults off", new Game().interestEnabled === false);
 
-  // Interest OFF must leave the player better off than interest ON.
-  const gA = new Game();
-  const gB = new Game();
-  gB.interestEnabled = false;
+  // Hard mode (interest) is OFF by default — ON must leave the player worse off.
+  const gHard = new Game();
+  const gEasy = new Game();
+  gHard.interestEnabled = true;
+  gEasy.interestEnabled = false;
   for (let i = 0; i < 40; i++) {
-    gA.update(0.2);
-    gB.update(0.2);
+    gHard.update(0.2);
+    gEasy.update(0.2);
   }
-  const netA = gA.player.cash - gA.player.credit.debt;
-  const netB = gB.player.cash - gB.player.credit.debt;
-  check("interest toggle off stops the debt drain", netB > netA + 100);
+  const netHard = gHard.player.cash - gHard.player.credit.debt;
+  const netEasy = gEasy.player.cash - gEasy.player.credit.debt;
+  check("interest toggle off stops the debt drain", netEasy > netHard + 100);
 }
 
 console.log("save round-trip");

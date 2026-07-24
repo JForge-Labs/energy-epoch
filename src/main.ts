@@ -45,7 +45,7 @@ app.innerHTML = `
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
       <div>Debt <strong id="stat-debt">$0</strong></div>
-      <div id="int-wrap" class="clickable" title="Click to toggle interest on/off">Int/day <strong id="stat-int">$0</strong></div>
+      <div title="Debt interest per day (Hard mode)">Int/day <strong id="stat-int">$0</strong></div>
       <div id="rep-wrap" class="clickable" title="Click for rep status">Rep <strong id="stat-rep">70</strong></div>
       <div>Oil <strong id="stat-oil">$0</strong></div>
       <div>Day <strong id="stat-day">1</strong></div>
@@ -59,6 +59,7 @@ app.innerHTML = `
       </div>
     </div>
     <div class="hud-actions">
+      <button type="button" class="tool-btn" id="btn-hard" title="Hard mode: debt interest accrues (~11% APR)">Hard: off</button>
       <select id="profile-select" class="profile-select" title="Save profile"></select>
       <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
       <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
@@ -74,8 +75,8 @@ app.innerHTML = `
       <div id="inspect-body">Hover tiles · Right-click for actions</div>
       <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span> · Roads need N/E/S/W edges</div>
     </div>
-    <div class="dash-panel" id="dash-panel">
-      <div class="inspect-title">Facility</div>
+    <div class="dash-panel scada" id="dash-panel">
+      <div class="inspect-title">Process</div>
       <div id="dash-body">—</div>
     </div>
     <div class="ledger-panel" id="ledger-panel">
@@ -86,6 +87,12 @@ app.innerHTML = `
     <div class="context-menu" id="context-menu" hidden></div>
     <div class="toast" id="toast"></div>
     <div class="confirm-banner" id="confirm-banner" hidden></div>
+    <div class="ledger-modal" id="ledger-modal" hidden>
+      <div class="ledger-modal-card">
+        <div class="ledger-modal-head"><span>Cash log — full history</span><button type="button" class="ctx-close" id="ledger-close">✕</button></div>
+        <div class="ledger-modal-body" id="ledger-modal-body"></div>
+      </div>
+    </div>
     <div class="gameover" id="gameover" hidden>
       <div class="gameover-card">
         <h2>Lease shut in</h2>
@@ -96,26 +103,40 @@ app.innerHTML = `
   </div>
   <footer class="bottom-bar">
     <div class="help-chip">Scroll zoom · Left-drag pan · Road/Pipe/Sell: drag to lay · Right-click for actions · Click a panel title (or C) to collapse</div>
-    <button class="tool-btn active" data-tool="select" type="button">Select</button>
-    <button class="tool-btn" data-tool="road" type="button">Road</button>
-    <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="gas_plant" type="button">Gas plant · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="refinery" type="button">Refinery · $${(REFINERY_COST / 1000000).toFixed(1)}M</button>
-    <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
-    <button class="tool-btn" data-tool="move_rig" type="button">Move rig</button>
-    <button class="tool-btn" data-tool="choke" type="button">Choke well</button>
-    <button class="tool-btn" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="drill" type="button">Drill</button>
-    <button class="tool-btn" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="truck" type="button">Truck 400 · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="small_truck" type="button">Truck 200 · $${(SMALL_TRUCK_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
-    <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
-    <button class="tool-btn" data-tool="draw_credit" type="button">Draw $250k</button>
+    <div class="tool-group" data-group="mode">
+      <button class="tool-btn active" data-tool="select" type="button">Select</button>
+    </div>
+    <div class="tool-group" data-group="actions">
+      <span class="tool-group-label">Actions</span>
+      <button class="tool-btn action" data-tool="drill" type="button">Drill</button>
+      <button class="tool-btn action" data-tool="choke" type="button">Choke</button>
+      <button class="tool-btn action" data-tool="move_rig" type="button">Move rig</button>
+      <button class="tool-btn action" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn action" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn action" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
+    </div>
+    <div class="tool-group" data-group="facilities">
+      <span class="tool-group-label">Facilities</span>
+      <button class="tool-btn" data-tool="road" type="button">Road</button>
+      <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="gas_plant" type="button">Gas plant · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="refinery" type="button">Refinery · $${(REFINERY_COST / 1000000).toFixed(1)}M</button>
+    </div>
+    <div class="tool-group" data-group="machinery">
+      <span class="tool-group-label">Machinery</span>
+      <button class="tool-btn" data-tool="truck" type="button">Truck 400 · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="small_truck" type="button">Truck 200 · $${(SMALL_TRUCK_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
+    </div>
+    <div class="tool-group" data-group="services">
+      <span class="tool-group-label">Services</span>
+      <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
+      <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
+      <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
+      <button class="tool-btn" data-tool="draw_credit" type="button">Draw $250k</button>
+    </div>
     <div class="tool-meta" id="tool-meta">Booting…</div>
   </footer>
 `;
@@ -130,9 +151,162 @@ const hoverTip = document.querySelector<HTMLDivElement>("#hover-tip")!;
 const inspectBody = document.querySelector<HTMLDivElement>("#inspect-body")!;
 const dashBody = document.querySelector<HTMLDivElement>("#dash-body")!;
 const ledgerBody = document.querySelector<HTMLDivElement>("#ledger-body")!;
+const dashPanel = document.querySelector<HTMLDivElement>("#dash-panel")!;
+const ledgerPanel = document.querySelector<HTMLDivElement>("#ledger-panel")!;
 const guideBar = document.querySelector<HTMLDivElement>("#guide-bar")!;
 const confirmBanner = document.querySelector<HTMLDivElement>("#confirm-banner")!;
 const gameoverEl = document.querySelector<HTMLDivElement>("#gameover")!;
+
+type Dash = ReturnType<Game["dashboard"]>;
+type Led = Dash["ledger"][number];
+
+// --- Build-once SCADA process panel + cash ticker (mutated per frame) ---
+dashBody.innerHTML = `
+  <div class="scada-alarm" data-k="alarm" hidden></div>
+  <div class="scada-stage"><span class="led-dot" data-k="wellsLed"></span><span class="scada-name">Wells</span><span class="scada-val" data-k="wellsVal"></span></div>
+  <div class="scada-stage"><span class="led-dot" data-k="tankLed"></span><span class="scada-name">Wellhead</span><span class="scada-val" data-k="tankVal"></span></div>
+  <div class="scada-stage"><span class="led-dot" data-k="battLed"></span><span class="scada-name">Battery</span></div>
+  <div class="meter"><span class="meter-cap">Crude</span><div class="meter-track"><div class="meter-fill" data-k="crudeFill"></div></div><span class="meter-val" data-k="crudeVal"></span></div>
+  <div class="meter"><span class="meter-cap">Clean</span><div class="meter-track"><div class="meter-fill" data-k="cleanFill"></div></div><span class="meter-val" data-k="cleanVal"></span></div>
+  <div class="meter"><span class="meter-cap">Treat</span><div class="meter-track"><div class="meter-fill" data-k="treatFill"></div></div><span class="meter-val" data-k="treatVal"></span></div>
+  <div class="scada-stage"><span class="led-dot" data-k="salesLed"></span><span class="scada-name">Sales</span><span class="scada-pill" data-k="salesPill"></span></div>
+  <div class="meter"><span class="meter-cap">Sales</span><div class="meter-track"><div class="meter-fill" data-k="salesFill"></div></div><span class="meter-val" data-k="salesVal"></span></div>
+  <div class="scada-stage"><span class="led-dot" data-k="gasLed"></span><span class="scada-name">Gas plant</span><span class="scada-val" data-k="gasVal"></span></div>
+  <div class="meter rep-meter"><span class="meter-cap">Rep</span><div class="meter-track"><div class="meter-fill" data-k="repFill"></div></div><span class="meter-val" data-k="repVal"></span></div>
+  <div class="scada-econ"><span>rev <b data-k="rev"></b></span><span>opex <b data-k="opex"></b></span><span>int <b data-k="int"></b></span></div>
+  <div class="scada-trucks" data-k="trucks"></div>
+`;
+const S: Record<string, HTMLElement> = {};
+dashBody.querySelectorAll<HTMLElement>("[data-k]").forEach((el) => {
+  S[el.dataset.k!] = el;
+});
+
+ledgerBody.innerHTML = `
+  <div class="led" data-k="t0"><span></span><span></span></div>
+  <div class="led" data-k="t1"><span></span><span></span></div>
+  <div class="ledger-more">▸ full log</div>
+`;
+const T: Record<string, HTMLElement> = {};
+ledgerBody.querySelectorAll<HTMLElement>("[data-k]").forEach((el) => {
+  T[el.dataset.k!] = el;
+});
+
+const ledgerModal = document.querySelector<HTMLDivElement>("#ledger-modal")!;
+const ledgerModalBody = document.querySelector<HTMLDivElement>("#ledger-modal-body")!;
+const ledRow = (e: Led) =>
+  `<div class="led ${e.amount >= 0 ? "in" : "out"}"><span>d${e.day.toFixed(0)} ${e.label}</span><span>${e.amount >= 0 ? "+" : ""}$${money(e.amount)}</span></div>`;
+function renderLedgerModal() {
+  const rows = game.ledger.recent(40);
+  ledgerModalBody.innerHTML = rows.length
+    ? rows.map(ledRow).join("")
+    : "<div>No movements yet</div>";
+}
+function openLedgerModal() {
+  renderLedgerModal();
+  ledgerModal.hidden = false;
+}
+function closeLedgerModal() {
+  ledgerModal.hidden = true;
+}
+ledgerBody.style.cursor = "pointer";
+ledgerBody.title = "Click for full cash history";
+ledgerBody.addEventListener("click", openLedgerModal);
+document.querySelector("#ledger-close")!.addEventListener("click", closeLedgerModal);
+ledgerModal.addEventListener("click", (e) => {
+  if (e.target === ledgerModal) closeLedgerModal();
+});
+
+const meterStatus = (pct: number, warn: number, bad: number) =>
+  pct >= bad ? "red" : pct >= warn ? "amber" : "green";
+function setMeter(
+  fill: HTMLElement,
+  valEl: HTMLElement,
+  pct: number,
+  status: string,
+  text: string,
+) {
+  fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  fill.dataset.status = status;
+  valEl.textContent = text;
+}
+
+function updateScada(d: Dash) {
+  if (d.advice) {
+    S.alarm.textContent = `⚠ ${d.advice}`;
+    S.alarm.hidden = false;
+  } else {
+    S.alarm.hidden = true;
+  }
+  S.wellsLed.dataset.status =
+    d.wellCount === 0 ? "grey" : d.oilBopd > 0 ? "green" : "amber";
+  S.wellsVal.textContent = `${d.wellCount} · ${d.oilBopd.toFixed(0)} bopd / ${d.gasMcfd.toFixed(0)} mcf`;
+  S.tankLed.dataset.status = d.stranded === 0 ? "green" : "red";
+  S.tankVal.textContent = d.stranded ? `${d.stranded} stranded` : "clear";
+
+  const crudePct = d.crudeCap ? (d.crude / d.crudeCap) * 100 : 0;
+  const cleanPct = d.cleanCap ? (d.clean / d.cleanCap) * 100 : 0;
+  const treatPct = d.treatCap ? Math.min(100, (d.oilBopd / d.treatCap) * 100) : 0;
+  setMeter(S.crudeFill, S.crudeVal, crudePct, meterStatus(crudePct, 70, 90), `${d.crude.toFixed(0)}/${d.crudeCap}`);
+  setMeter(S.cleanFill, S.cleanVal, cleanPct, meterStatus(cleanPct, 70, 90), `${d.clean.toFixed(0)}/${d.cleanCap}`);
+  setMeter(
+    S.treatFill,
+    S.treatVal,
+    treatPct,
+    d.oilBopd > d.treatCap ? "red" : d.oilBopd > d.treatCap * 0.9 ? "amber" : "green",
+    `${d.oilBopd.toFixed(0)}/${d.treatCap}`,
+  );
+  const battWorst = Math.max(crudePct, cleanPct);
+  S.battLed.dataset.status =
+    battWorst >= 90 ? "red" : battWorst >= 70 ? "amber" : d.batteries ? "green" : "grey";
+
+  const salesPct = d.refSlotCap ? (d.refSlotUsed / d.refSlotCap) * 100 : 0;
+  S.salesLed.dataset.status =
+    d.refSlotCap === 0
+      ? "red"
+      : d.refSlotUsed >= d.refSlotCap - 0.5
+        ? "amber"
+        : d.refSlotUsed > 0
+          ? "green"
+          : "grey";
+  setMeter(S.salesFill, S.salesVal, salesPct, salesPct >= 99 ? "amber" : "green", `${d.refSlotUsed.toFixed(0)}/${d.refSlotCap}`);
+  S.salesPill.textContent = d.oilPiped ? "pipe ✓" : "";
+
+  S.gasLed.dataset.status = d.gasPlants > 0 ? "green" : d.gasMcfd > 0 ? "amber" : "grey";
+  S.gasVal.textContent = d.gasPlants
+    ? `${d.gasPlants} plant${d.gasPlants > 1 ? "s" : ""}`
+    : d.gasMcfd > 0
+      ? "flaring"
+      : "—";
+
+  S.repFill.style.width = `${d.rep}%`;
+  S.repFill.dataset.status = d.rep < 25 ? "red" : d.rep < 45 ? "amber" : "green";
+  S.repVal.textContent = d.rep.toFixed(0);
+  S.rev.textContent = `$${money(d.revenueToday)}`;
+  S.opex.textContent = `$${money(d.opexToday)}`;
+  S.int.textContent = d.interestOn ? `$${money(d.interestToday)}` : "off";
+
+  const truckLine = d.trucks
+    .map((t) => `${t.job}${t.cargo > 0 ? ` ${t.kind}:${t.cargo.toFixed(0)}` : ""}`)
+    .join(" · ");
+  S.trucks.textContent = `Trucks: ${truckLine || "none"}`;
+}
+
+function updateTicker(d: Dash) {
+  const rows = [T.t0, T.t1];
+  for (let i = 0; i < 2; i++) {
+    const e = d.ledger[i];
+    const row = rows[i];
+    if (e) {
+      row.hidden = false;
+      row.className = `led ${e.amount >= 0 ? "in" : "out"}`;
+      (row.children[0] as HTMLElement).textContent = `d${e.day.toFixed(0)} ${e.label}`;
+      (row.children[1] as HTMLElement).textContent = `${e.amount >= 0 ? "+" : ""}$${money(e.amount)}`;
+    } else {
+      row.hidden = true;
+      row.className = "led";
+    }
+  }
+}
 
 let game = new Game();
 let cam = createCamera(game.config.cols, game.config.rows);
@@ -463,9 +637,13 @@ document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   pinnedInspect = game.opsReason;
   inspectBody.textContent = game.opsReason;
 });
-document.querySelector("#int-wrap")!.addEventListener("click", () => {
+document.querySelector("#btn-hard")!.addEventListener("click", () => {
   game.interestEnabled = !game.interestEnabled;
-  flash(game.interestEnabled ? "Debt interest ON." : "Debt interest OFF (sandbox).");
+  flash(
+    game.interestEnabled
+      ? "Hard mode ON — debt interest accrues."
+      : "Hard mode OFF — no interest.",
+  );
   saveGame();
   syncHud();
 });
@@ -485,6 +663,7 @@ document.querySelector("#rep-wrap")!.addEventListener("click", () => {
 
 document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
   btn.addEventListener("click", () => {
+    (btn as HTMLElement).blur(); // keep keyboard focus off buttons
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
 
     if (tool === "drill") {
@@ -559,6 +738,9 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
 });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+// Suppress the native right-click menu everywhere (buttons/panels) so it can't
+// expose Chrome's "Inspect" → DevTools. The in-game menu is a pointerup handler.
+document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener(
   "wheel",
@@ -590,7 +772,7 @@ function handleTileClick(tile: { x: number; y: number }) {
     }
     game.buyExploration(tile.x, tile.y);
     flash(game.message);
-    disarmToSelect();
+    // Latched: stay armed for the next survey (Select/Esc/another tool clears).
     syncAll();
     return;
   }
@@ -738,6 +920,15 @@ let downClientY = 0;
 let downTile: { x: number; y: number } | null = null;
 let dragKind: "pan" | "paint" | null = null;
 let lastPaintTile: { x: number; y: number } | null = null;
+// Touch/pen have no right-click; a long-press opens the action menu instead.
+let longPressTimer = 0;
+let longPressFired = false;
+function cancelLongPress() {
+  if (longPressTimer) {
+    window.clearTimeout(longPressTimer);
+    longPressTimer = 0;
+  }
+}
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button === 1 || e.button === 2) {
@@ -757,6 +948,20 @@ canvas.addEventListener("pointerdown", (e) => {
   downClientY = e.clientY;
   downTile = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
   canvas.setPointerCapture(e.pointerId);
+
+  longPressFired = false;
+  cancelLongPress();
+  if (e.pointerType !== "mouse") {
+    const px = e.clientX;
+    const py = e.clientY;
+    longPressTimer = window.setTimeout(() => {
+      const tile = canvasToTile(canvas, game, cam, px, py);
+      if (tile) {
+        longPressFired = true;
+        openContextMenu(px, py, tile);
+      }
+    }, 450);
+  }
 });
 
 canvas.addEventListener("pointermove", (e) => {
@@ -787,6 +992,7 @@ canvas.addEventListener("pointermove", (e) => {
         (e.clientY - downClientY) * (canvas.height / rect.height),
       );
       if (dist > DRAG_THRESHOLD) {
+        cancelLongPress(); // a drag is not a long-press
         if (isPaintTool(game.tool)) {
           dragKind = "paint";
           if (downTile) {
@@ -858,10 +1064,12 @@ canvas.addEventListener("pointerup", (e) => {
 
   if (e.button === 0 && leftDown) {
     leftDown = false;
-    // A clean click (no drag) triggers the tool action
-    if (dragKind === null && downTile) {
+    cancelLongPress();
+    // A clean click (no drag, no long-press menu) triggers the tool action
+    if (dragKind === null && downTile && !longPressFired) {
       handleTileClick(downTile);
     }
+    longPressFired = false;
     dragKind = null;
     lastPaintTile = null;
   }
@@ -872,6 +1080,10 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 window.addEventListener("keydown", (e) => {
+  // Never hijack browser chords (Ctrl/Cmd/Alt) or keys typed into a control.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const kt = e.target as HTMLElement | null;
+  if (kt && /^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(kt.tagName)) return;
   const step = 1 / cam.zoom;
   if (e.key === "w" || e.key === "ArrowUp") cam.y -= step;
   if (e.key === "s" || e.key === "ArrowDown") cam.y += step;
@@ -883,6 +1095,7 @@ window.addEventListener("keydown", (e) => {
     clearConfirm();
     disarmToSelect();
     closeContextMenu();
+    closeLedgerModal();
   }
   if (e.key === "h") {
     const p = game.recenterHint();
@@ -942,6 +1155,9 @@ function openContextMenu(
   if (b?.kind === "wellhead_tank") {
     items.push({ label: `Add tank (${k(ADD_TANK_COST)})`, act: () => game.addTank(tile.x, tile.y) });
   }
+  if (!tt.surveyed) {
+    items.push({ label: `Explore here (${k(EXPLORE_COST)})`, act: () => game.buyExploration(tile.x, tile.y) });
+  }
   const onStructure = well || (b && b.kind !== "gas_flare");
   if (!onStructure) {
     if (!tt.hasRoad) items.push({ label: `Road (${k(ROAD_COST)})`, act: () => game.layRoad(tile.x, tile.y) });
@@ -999,6 +1215,9 @@ function syncHud() {
   document.querySelector("#stat-int")!.textContent = d.interestOn
     ? `$${money(d.interestPerDay)}`
     : "off";
+  const hardBtn = document.querySelector("#btn-hard") as HTMLElement;
+  hardBtn.textContent = d.interestOn ? "Hard: ON" : "Hard: off";
+  hardBtn.classList.toggle("active", d.interestOn);
   const repEl = document.querySelector("#stat-rep") as HTMLElement;
   repEl.textContent = game.player.reputation.toFixed(0);
   repEl.style.color =
@@ -1025,28 +1244,10 @@ function syncHud() {
 
 function syncDash() {
   const d = game.dashboard();
-  const truckLine = d.trucks
-    .map((t) => `${t.job}${t.cargo > 0 ? ` ${t.kind}:${t.cargo.toFixed(0)}` : ""}`)
-    .join(" · ");
-  const prodBopd = d.oilBopd;
-  const treatWarn = prodBopd > d.treatCap ? " warn" : "";
-  dashBody.innerHTML = `
-    ${d.advice ? `<div class="advice">⚠ ${d.advice}</div>` : ""}
-    <div>${d.wellCount} wells · <strong>${d.oilBopd.toFixed(0)}</strong> bopd · <strong>${d.gasMcfd.toFixed(0)}</strong> mcf/d</div>
-    <div>Battery crude ${d.crude.toFixed(0)}/${d.crudeCap} · clean ${d.clean.toFixed(0)}/${d.cleanCap}</div>
-    <div class="cap-line">Capacity: <span class="${treatWarn}">treat ${prodBopd.toFixed(0)}/${d.treatCap} bpd</span> · sales ${d.refSlotUsed.toFixed(0)}/${d.refSlotCap} bpd today${d.oilPiped ? ' · <span class="piped">oil pipe ✓</span>' : ""}${d.gasPlants ? ` · ${d.gasPlants} gas plant${d.gasPlants > 1 ? "s" : ""}` : ""}</div>
-    <div>Trucks: ${truckLine || "none"}</div>
-    <div>Today rev $${money(d.revenueToday)} · opex $${money(d.opexToday)} · int $${money(d.interestToday)}</div>
-    ${d.stranded ? `<div class="warn">${d.stranded} stranded wellhead(s) — check guide</div>` : ""}
-  `;
-  ledgerBody.innerHTML = d.ledger.length
-    ? d.ledger
-        .map((e) => {
-          const sign = e.amount >= 0 ? "+" : "";
-          return `<div class="led ${e.amount >= 0 ? "in" : "out"}"><span>d${e.day.toFixed(0)} ${e.label}</span><span>${sign}$${money(e.amount)}</span></div>`;
-        })
-        .join("")
-    : "<div>No movements yet</div>";
+  // Panels collapse to just their title; skip mutating hidden bodies.
+  if (!dashPanel.classList.contains("panel-collapsed")) updateScada(d);
+  if (!ledgerPanel.classList.contains("panel-collapsed")) updateTicker(d);
+  if (!ledgerModal.hidden) renderLedgerModal();
   guideBar.textContent = d.guide;
 
   if (d.gameOver) {

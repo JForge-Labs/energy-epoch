@@ -215,13 +215,225 @@ body {
 .dash-panel {
   top: 0.75rem;
   right: 0.75rem;
+  width: min(320px, 74vw);
 }
 
+/* Ticker anchors bottom-right (above the guide bar) so it clears the taller
+   SCADA panel at top-right. */
 .ledger-panel {
-  top: 8.5rem;
+  top: auto;
+  bottom: 3.4rem;
   right: 0.75rem;
-  max-height: 40vh;
+}
+
+/* SCADA process panel — status LEDs + bar meters, mutated in place per frame. */
+.scada-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.12rem 0;
+}
+
+.scada-name {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  min-width: 4.4rem;
+}
+
+.scada-val {
+  color: var(--text-dim);
+  font-size: 0.66rem;
+}
+
+.scada-pill {
+  color: var(--ok);
+  font-size: 0.62rem;
+}
+
+.led-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--steel-dim);
+}
+
+.led-dot[data-status="green"] {
+  background: var(--ok);
+  box-shadow: 0 0 5px var(--ok);
+}
+
+.led-dot[data-status="amber"] {
+  background: var(--amber-hot);
+  box-shadow: 0 0 5px var(--amber-hot);
+}
+
+.led-dot[data-status="red"] {
+  background: var(--danger);
+  box-shadow: 0 0 5px var(--danger);
+}
+
+.led-dot[data-status="grey"] {
+  background: var(--steel-dim);
+  box-shadow: none;
+}
+
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.08rem 0 0.08rem 0.3rem;
+}
+
+.meter-cap {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  min-width: 2.8rem;
+}
+
+.meter-track {
+  flex: 1;
+  height: 0.5rem;
+  background: #141916;
+  border: 1px solid var(--bg-panel-edge);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.25s ease;
+  background: var(--ok);
+}
+
+.meter-fill[data-status="amber"] {
+  background: var(--amber-hot);
+}
+
+.meter-fill[data-status="red"] {
+  background: var(--danger);
+}
+
+.meter-val {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  min-width: 4.4rem;
+  text-align: right;
+}
+
+.scada-econ {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  border-top: 1px solid var(--bg-panel-edge);
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  font-size: 0.62rem;
+}
+
+.scada-econ b {
+  font-weight: 600;
+}
+
+.scada-econ span:nth-child(1) b {
+  color: var(--ok);
+}
+
+.scada-econ span:nth-child(2) b,
+.scada-econ span:nth-child(3) b {
+  color: var(--danger);
+}
+
+.scada-trucks {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  margin-top: 0.25rem;
+}
+
+.scada-alarm {
+  margin: 0 0 0.4rem;
+  padding: 0.3rem 0.4rem;
+  border-left: 3px solid var(--amber-hot);
+  background: rgba(240, 192, 64, 0.1);
+  color: var(--amber-hot);
+  font-weight: 600;
+  line-height: 1.25;
+  font-size: 0.66rem;
+}
+
+.scada-alarm[hidden] {
+  display: none;
+}
+
+/* Cash ticker + full-history modal. */
+.ledger-more {
+  font-size: 0.62rem;
+  color: var(--steel-dim);
+  margin-top: 0.2rem;
+}
+
+.led[hidden] {
+  display: none;
+}
+
+.ledger-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  background: rgba(8, 10, 8, 0.55);
+  display: grid;
+  place-items: center;
+}
+
+.ledger-modal[hidden] {
+  display: none !important;
+}
+
+.ledger-modal-card {
+  width: min(440px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(16, 20, 18, 0.97);
+  border: 1px solid var(--amber);
+}
+
+.ledger-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--bg-panel-edge);
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+  font-size: 0.85rem;
+}
+
+.ledger-modal-body {
   overflow: auto;
+  max-height: 70vh;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.7rem;
+}
+
+.ctx-close {
+  appearance: none;
+  border: 1px solid var(--bg-panel-edge);
+  background: #141916;
+  color: var(--text);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 0.15rem 0.5rem;
+}
+
+.ctx-close:hover {
+  color: var(--amber-hot);
+  border-color: var(--steel);
 }
 
 /* Help text lives in the toolbar as its own full-width row so it can never
@@ -380,6 +592,49 @@ body {
 .tool-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Toolbar categories: Facilities / Machinery / Services + a prominent Actions row. */
+.tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--bg-panel-edge);
+}
+
+.tool-group[data-group="mode"] {
+  padding-left: 0;
+  border-left: none;
+}
+
+.tool-group-label {
+  flex-basis: 100%;
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--steel-dim);
+}
+
+/* Showcase action buttons (verbs) — larger and amber. */
+.tool-btn.action {
+  font-size: 0.86rem;
+  padding: 0.62rem 0.95rem;
+  font-weight: 600;
+  border-color: var(--amber);
+  background: linear-gradient(180deg, #2a2416, #1b1d14);
+  color: var(--amber-hot);
+}
+
+.tool-btn.action:hover {
+  border-color: var(--amber-hot);
+  background: #332b16;
+}
+
+.tool-btn.action.active {
+  box-shadow: inset 0 0 0 1px var(--amber-hot);
 }
 
 .tool-meta {

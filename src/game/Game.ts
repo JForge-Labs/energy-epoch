@@ -172,8 +172,8 @@ export class Game {
   private pipesDirty = true;
   /** Player time-of-day speed multiplier (0 = paused). */
   timeScale = 1;
-  /** When false, debt interest does not accrue (sandbox toggle). */
-  interestEnabled = true;
+  /** Debt interest ("Hard mode"). Off by default; on = ~11% APR drain. */
+  interestEnabled = false;
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
