@@ -22,11 +22,14 @@
  *   stage: weather tint (screen space)
  *
  * TERRAIN PERF (session 2+): the map is split into 16×16-tile chunks. Each
- * chunk has a root Container with two Graphics: opaque base stamps + survey
- * overlays. Per frame we only (a) toggle visibility and (b) restamp when the
- * tile signature changes. On restamp we destroy/recreate both Graphics so
- * mid-session explore never leaves residual tint (hard-refresh looked fine;
- * live clear() did not).
+ * chunk has a root Container with three Graphics: opaque base stamps, survey
+ * tint fills, and fill-free pip stamps. Per frame we only (a) toggle
+ * visibility and (b) restamp when the tile signature changes. On restamp we
+ * destroy/recreate all three so mid-session explore never inherits stale
+ * fill alpha. Root cause (confirmed in Pixi source): fill({alpha}) mutates
+ * the Graphics' persistent fillStyle, clear() does NOT reset it, and
+ * texture() bakes fillStyle.alpha into every stamp — so translucent fills
+ * and texture stamps must never share a Graphics across passes.
  *
  * Every texture comes from src/game/gfx/atlas.ts (`texFor(name)`): a real
  * packed atlas when present, generated placeholders until the art pass.
@@ -143,12 +146,20 @@ function tileCode(t: Tile): number {
 }
 
 interface TerrainChunk {
-  /** Holds base + survey so we can show/hide the whole chunk. */
+  /** Holds base + survey + pips so we can show/hide the whole chunk. */
   root: Container;
   /** Opaque terrain/road/pad textures only — never semi-transparent fills. */
   base: Graphics;
-  /** Survey tints + pips only — separate so fill alpha cannot tint base stamps. */
+  /** Survey tints + special outlines only — the alpha fills live here. */
   survey: Graphics;
+  /**
+   * Prospect letter pips — texture stamps only, NO fills ever. Pixi's
+   * GraphicsContext.texture() bakes in the *current persistent* fillStyle
+   * alpha, and fill({alpha}) mutates that style (clear() doesn't reset it) —
+   * so any Graphics that mixes translucent fills with texture stamps renders
+   * later stamps washed out. Keeping pips fill-free keeps them crisp.
+   */
+  pips: Graphics;
   sig: number;
   x0: number;
   y0: number;
@@ -314,9 +325,10 @@ export class PixiRenderer {
     const root = new Container();
     const base = new Graphics();
     const survey = new Graphics();
-    root.addChild(base, survey);
+    const pips = new Graphics();
+    root.addChild(base, survey, pips);
     this.terrain.addChild(root);
-    return { root, base, survey, sig: Number.NaN, x0, y0 };
+    return { root, base, survey, pips, sig: Number.NaN, x0, y0 };
   }
 
   /** (Re)allocate the chunk grid when the map itself is swapped (reset/load). */
@@ -394,12 +406,15 @@ export class PixiRenderer {
     chunk.root.removeChildren();
     chunk.base.destroy();
     chunk.survey.destroy();
+    chunk.pips.destroy();
     chunk.base = new Graphics();
     chunk.survey = new Graphics();
-    chunk.root.addChild(chunk.base, chunk.survey);
+    chunk.pips = new Graphics();
+    chunk.root.addChild(chunk.base, chunk.survey, chunk.pips);
 
     const base = chunk.base;
     const survey = chunk.survey;
+    const pips = chunk.pips;
 
     for (let y = chunk.y0; y < yEnd; y++) {
       for (let x = chunk.x0; x < xEnd; x++) {
@@ -430,7 +445,10 @@ export class PixiRenderer {
           });
         }
         if (!tile.drilled) {
-          survey.texture(
+          // Stamped on the fill-free `pips` Graphics — see TerrainChunk note:
+          // texture() inherits fillStyle alpha, so pips must never share a
+          // Graphics with the translucent survey tints or they render faded.
+          pips.texture(
             texFor(prospectPipFrame(tile.subsurface.prospect)),
             0xffffff,
             px + ts * 0.08,
