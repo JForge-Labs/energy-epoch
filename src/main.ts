@@ -45,11 +45,11 @@ app.innerHTML = `
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
       <div>Debt <strong id="stat-debt">$0</strong></div>
-      <div title="Debt interest per day (Hard mode)">Int/day <strong id="stat-int">$0</strong></div>
-      <div id="rep-wrap" class="clickable" title="Click for rep status">Rep <strong id="stat-rep">70</strong></div>
-      <div>Oil <strong id="stat-oil">$0</strong></div>
-      <div>Day <strong id="stat-day">1</strong></div>
-      <div id="ops-wrap" class="clickable" title="Click for ops detail">Ops <strong id="stat-ops">—</strong></div>
+      <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
+      <div id="rep-wrap" class="clickable" title="Reputation (0–100). Low rep brings fines, then a shut-in order at 0. Falls from flaring and spills. Click for status.">Rep <strong id="stat-rep">70</strong></div>
+      <div title="Cumulative oil revenue sold this lease.">Oil <strong id="stat-oil">$0</strong></div>
+      <div title="Days elapsed on the lease.">Day <strong id="stat-day">1</strong></div>
+      <div id="ops-wrap" class="clickable" title="Operating status. GREEN = revenue beats interest + opex. RED = losing money. Click for the exact reason.">Ops <strong id="stat-ops">—</strong></div>
       <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
@@ -218,9 +218,11 @@ function renderLedgerModal() {
 function openLedgerModal() {
   renderLedgerModal();
   ledgerModal.hidden = false;
+  applyTimeHold();
 }
 function closeLedgerModal() {
   ledgerModal.hidden = true;
+  applyTimeHold();
 }
 ledgerBody.style.cursor = "pointer";
 ledgerBody.title = "Click for full cash history";
@@ -468,6 +470,7 @@ function money(n: number) {
 function clearConfirm() {
   pendingConfirm = null;
   confirmBanner.hidden = true;
+  applyTimeHold();
 }
 
 function askConfirm(tool: BuildTool, detail: string): boolean {
@@ -476,6 +479,7 @@ function askConfirm(tool: BuildTool, detail: string): boolean {
     return true;
   }
   pendingConfirm = tool;
+  applyTimeHold();
   const cost = COST[tool];
   confirmBanner.hidden = false;
   confirmBanner.textContent = cost
@@ -594,9 +598,22 @@ function loadGame(): boolean {
   }
 }
 
+// --- Decision hold (Bug #6) ---------------------------------------------
+// While the player is mid-decision (a two-click confirm is pending, or the
+// ledger modal is open) the sim must not advance. We freeze by forcing
+// game.timeScale to 0, but keep `currentSpeed` as the player's chosen speed
+// so it (including a player-chosen pause of 0) is restored on release.
+function decisionHeld(): boolean {
+  return pendingConfirm !== null || !ledgerModal.hidden;
+}
+
+function applyTimeHold() {
+  game.timeScale = decisionHeld() ? 0 : currentSpeed;
+}
+
 function setSpeed(s: number) {
   currentSpeed = s;
-  game.timeScale = s;
+  applyTimeHold();
   document.querySelectorAll(".spd-btn").forEach((b) => {
     b.classList.toggle("active", Number((b as HTMLElement).dataset.spd) === s);
   });
@@ -1450,7 +1467,14 @@ function syncDash() {
   if (!ledgerModal.hidden) renderLedgerModal();
   triagePanel.dataset.level = d.triage.level;
   triageMsg.textContent = d.triage.msg;
-  guideBar.textContent = d.guide;
+  // Bug #8: before any production exists (no producing wells / no income
+  // path), the generic objective doesn't explain how to become profitable.
+  // Surface the full money loop in the guide line. Leave the game-over guide
+  // and every post-production guide untouched (triage panel is separate).
+  guideBar.textContent =
+    !d.gameOver && d.wellCount === 0
+      ? "Money loop: Explore → Drill a Good/Sweet LAND tile → Road pad→battery→refinery → trucks haul crude→clean→Sell."
+      : d.guide;
 
   if (d.gameOver) {
     gameoverEl.hidden = false;
