@@ -65,7 +65,8 @@ export const GAS_PLANT_COST = 300_000;
 export const GAS_PLANT_PREMIUM = 1.6;
 
 /** Additional built facilities (beyond the financed starters). */
-export const BATTERY_COST = 650_000;
+/** A tank battery is a quarter of the gas plant's cost. */
+export const BATTERY_COST = GAS_PLANT_COST / 4;
 export const REFINERY_COST = 1_600_000;
 /** A bought refinery's daily sales slot — matches the starter. */
 export const REFINERY_SLOT_BPD = 1_200;
