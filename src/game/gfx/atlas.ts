@@ -96,6 +96,31 @@ const waterDecor = (g: Graphics, s: number) => {
     .stroke({ width: 1.5, color: C.waterRipple, alpha: 0.5 });
 };
 
+/** One pumpjack anim frame: base + post + walking beam at `angle` radians. */
+function jackFrame(angle: number): FrameDef {
+  return {
+    w: 1,
+    h: 1,
+    draw: (g, s) => {
+      const p = s * 0.12;
+      const w = s - p * 2;
+      // Base + samson post.
+      g.rect(p + w * 0.35, p + w * 0.55, w * 0.3, w * 0.35).fill(C.jack);
+      g.rect(p + w * 0.47, p + w * 0.3, w * 0.06, w * 0.28).fill(C.jack);
+      // Walking beam pivots on the post; horsehead on the well end.
+      const cx = p + w * 0.5;
+      const cy = p + w * 0.42;
+      const half = w * 0.38;
+      const dx = Math.cos(angle) * half;
+      const dy = Math.sin(angle) * half;
+      g.moveTo(cx - dx, cy - dy)
+        .lineTo(cx + dx, cy + dy)
+        .stroke({ width: s * 0.06, color: C.jack });
+      g.circle(cx + dx, cy + dy, w * 0.08).fill(C.jack);
+    },
+  };
+}
+
 /** Letter pip for surveyed prospect grade (kept as a texture, not per-tile Text). */
 function pipFrame(letter: string, color: number): FrameDef {
   return {
@@ -154,18 +179,12 @@ export const MANIFEST: Record<string, FrameDef> = {
       g.rect(0.5, 0.5, s - 1, s - 1).stroke({ width: 1, color: C.grid });
     },
   },
-  "building.pumpjack": {
-    w: 1,
-    h: 1,
-    draw: (g, s) => {
-      const p = s * 0.12;
-      const w = s - p * 2;
-      g.rect(p + w * 0.35, p + w * 0.5, w * 0.3, w * 0.4).fill(C.jack);
-      g.moveTo(p + w * 0.15, p + w * 0.55)
-        .lineTo(p + w * 0.85, p + w * 0.2)
-        .stroke({ width: s * 0.06, color: C.jack });
-    },
-  },
+  // Pumpjack animation cycle: 4 beam positions, played 0→3→0 (ping-pong) by
+  // the renderer while the well produces. Real atlas ships these same names.
+  "building.pumpjack.0": jackFrame(-0.3),
+  "building.pumpjack.1": jackFrame(-0.1),
+  "building.pumpjack.2": jackFrame(0.1),
+  "building.pumpjack.3": jackFrame(0.3),
   "building.wellhead_tank": {
     w: 1,
     h: 1,

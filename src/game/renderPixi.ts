@@ -10,23 +10,39 @@
  *
  * Layer stack (per docs/planning/GRAPHICS_PASS.md):
  *   world
- *     ├─ terrain   texture stamps per tile (ground/scrub/rock/water/road/pad)
+ *     ├─ terrain   CHUNKED static stamps (see below) incl. survey tint + pips
  *     ├─ infra     oil/gas pipes (live vs dead + flow pulse) & spill decals
- *     ├─ buildings Sprite pool by building id + code-drawn fill bars
+ *     ├─ buildings Sprite pool by building id (jack anim) + code fill bars
  *     ├─ wells     drill progress / duster / choked markers
  *     ├─ units     Sprite pool by unit id (trucks rotate to heading)
- *     ├─ fx        flare sprites (alpha pulse) — particles land here later
- *     └─ overlays  survey grades, prospect pips, selection, hover
+ *     ├─ fx        flare sprites (alpha pulse)
+ *     ├─ labels    BitmapText pool (bopd, SHUT, facility names) — hidden at
+ *     │            far zoom so the overview stays clean
+ *     └─ overlays  hover ring only (everything static moved into terrain)
  *   stage: weather tint (screen space)
+ *
+ * TERRAIN PERF (session 2): the map is split into 16×16-tile chunks, each its
+ * own Graphics. Per frame we only (a) toggle chunk visibility against the
+ * viewport and (b) recompute a cheap integer signature of each *visible*
+ * chunk's tile state (terrain/road/pad/surveyed/drilled); a chunk restamps
+ * ONLY when its signature changes (road laid, tile surveyed, well drilled,
+ * map regenerated). Steady-state cost at min zoom drops from ~4k texture
+ * stamps/frame to integer math — the stamps happen once per change.
  *
  * Every texture comes from src/game/gfx/atlas.ts (`texFor(name)`): a real
  * packed atlas when present, generated placeholders until the art pass.
- * Known scaffold gaps (next session): terrain stamps still re-issue per frame
- * (static tile cache pending), no facility text labels, no pumpjack anim.
  */
-import { Application, Container, Graphics, Sprite } from "pixi.js";
+import {
+  Application,
+  BitmapFont,
+  BitmapText,
+  Container,
+  Graphics,
+  Sprite,
+} from "pixi.js";
 import type { Camera } from "./camera";
 import type { Game } from "./Game";
+import type { Tile, Well } from "./types";
 import { initAtlas, texFor } from "./gfx/atlas";
 import { pipeSnapsTo } from "./render";
 
@@ -38,7 +54,9 @@ const P = {
   pipeDead: 0x565049,
   pipeDeadCore: 0x726a5f,
   rig: 0xd4a017,
+  rigText: 0x1a1610,
   duster: 0x5a5048,
+  dusterText: 0xb0a090,
   select: 0xf0c040,
   danger: 0xc45c26,
   crude: 0x1a1008,
@@ -46,6 +64,7 @@ const P = {
   special: 0xc85078,
   spill: 0x281408,
   storm: 0x283246,
+  label: 0xe8ece6,
   bg: 0x11150f,
 };
 
@@ -55,6 +74,16 @@ const N4: [number, number][] = [
   [0, 1],
   [0, -1],
 ];
+
+/** Tiles per terrain chunk (16×16 → 5×4 chunks on the 80×52 lease). */
+const CHUNK = 16;
+/** Labels get hidden below this zoom — unreadable + floods the overview. */
+const LABEL_MIN_ZOOM = 0.5;
+const FONT = "ops-label";
+/** Font is baked at this px size; world sizes scale off it. */
+const FONT_PX = 48;
+/** Pumpjack stroke cycle: 0→3→0 ping-pong. */
+const JACK_SEQ = [0, 1, 2, 3, 2, 1];
 
 /** Prospect fill overlay for a surveyed tile (matches canvas renderer). */
 function prospectOverlay(p: number): { c: number; a: number } | null {
@@ -73,6 +102,21 @@ function prospectPipFrame(p: number): string {
   return "pip.sweet";
 }
 
+function terrainIdx(terrain: string): number {
+  switch (terrain) {
+    case "water":
+      return 1;
+    case "creek":
+      return 2;
+    case "rock":
+      return 3;
+    case "scrub":
+      return 4;
+    default:
+      return 0;
+  }
+}
+
 function terrainFrame(terrain: string, even: boolean): string {
   switch (terrain) {
     case "water":
@@ -88,22 +132,40 @@ function terrainFrame(terrain: string, even: boolean): string {
   }
 }
 
+/** Visual state of one tile, as far as terrain-chunk stamping cares. */
+function tileCode(t: Tile): number {
+  return (
+    terrainIdx(t.terrain) |
+    (t.hasRoad ? 8 : 0) |
+    (t.isPad ? 16 : 0) |
+    (t.surveyed ? 32 : 0) |
+    (t.drilled ? 64 : 0)
+  );
+}
+
+interface TerrainChunk {
+  g: Graphics;
+  sig: number;
+  x0: number;
+  y0: number;
+}
+
 export class PixiRenderer {
   private canvas: HTMLCanvasElement;
   private app: Application | null = null;
   private world = new Container();
 
   // Layer containers (see header). Graphics children are the code-overlay
-  // parts (state bars, markers); Sprites land beside them.
+  // parts (state bars, markers); Sprites/BitmapTexts land beside them.
   private terrain = new Container();
   private infra = new Container();
   private buildings = new Container();
   private wells = new Container();
   private units = new Container();
   private fx = new Container();
+  private labels = new Container();
   private overlays = new Container();
 
-  private gTerrain = new Graphics();
   private gInfra = new Graphics();
   private gSpills = new Graphics();
   private gBuildState = new Graphics();
@@ -112,11 +174,19 @@ export class PixiRenderer {
   private gOverlays = new Graphics();
   private gWeather = new Graphics();
 
-  // Sprite pools keyed by entity id — created on first sight, destroyed when
-  // the entity goes away (sell, flare capped, truck sold).
+  // Static terrain chunks — rebuilt per chunk only when its signature changes.
+  private chunks: TerrainChunk[] = [];
+  private chunkCols = 0;
+  private chunkRows = 0;
+  private chunkTilesRef: Tile[][] | null = null;
+
+  // Sprite/label pools keyed by entity id — created on first sight, destroyed
+  // when the entity goes away (sell, flare capped, truck sold).
   private bPool = new Map<string, Sprite>();
   private uPool = new Map<string, Sprite>();
   private fxPool = new Map<string, Sprite>();
+  private lPool = new Map<string, BitmapText>();
+  private lSeen = new Set<string>();
 
   private w = 0;
   private h = 0;
@@ -150,7 +220,18 @@ export class PixiRenderer {
 
     await initAtlas(app.renderer);
 
-    this.terrain.addChild(this.gTerrain);
+    // One shared bitmap font: glyphs bake once, labels tint per use.
+    BitmapFont.install({
+      name: FONT,
+      style: {
+        fontFamily: "IBM Plex Mono, monospace",
+        fontWeight: "600",
+        fontSize: FONT_PX,
+        fill: 0xffffff,
+      },
+      chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%.,- ",
+    });
+
     this.infra.addChild(this.gInfra, this.gSpills);
     this.buildings.addChild(this.gBuildState); // sprites insert below (addChildAt 0)
     this.wells.addChild(this.gWells);
@@ -164,6 +245,7 @@ export class PixiRenderer {
       this.wells,
       this.units,
       this.fx,
+      this.labels,
       this.overlays,
     );
     app.stage.addChild(this.world, this.gWeather);
@@ -204,28 +286,96 @@ export class PixiRenderer {
       maxY: Math.min(game.config.rows - 1, Math.ceil(cam.y + halfY)),
     };
 
-    this.drawTerrain(game, ts, bounds);
+    // Labels are pooled; hide (and skip syncing) at far zoom.
+    const showLabels = zoom >= LABEL_MIN_ZOOM;
+    this.labels.visible = showLabels;
+    this.lSeen.clear();
+
+    this.syncTerrain(game, ts, bounds);
     this.drawInfra(game, ts, bounds, now);
-    this.syncBuildings(game, ts);
-    this.drawWells(game, ts);
-    this.syncUnits(game, ts);
+    this.syncBuildings(game, ts, now, showLabels);
+    this.drawWells(game, ts, showLabels);
+    this.syncUnits(game, ts, showLabels);
     this.syncFx(game, ts, now);
-    this.drawOverlays(game, ts, bounds, hover);
+    this.drawHover(hover, ts);
     this.drawWeather(game);
+    if (showLabels) this.sweepLabels();
 
     this.app.render();
   }
 
-  /** Terrain + roads/pads as texture stamps — grid + decor baked into frames. */
-  private drawTerrain(
+  // ---------------------------------------------------------------- terrain
+
+  /** (Re)allocate the chunk grid when the map itself is swapped (reset/load). */
+  private ensureChunks(game: Game): void {
+    if (this.chunkTilesRef === game.tiles && this.chunks.length) return;
+    this.chunkTilesRef = game.tiles;
+    for (const c of this.chunks) c.g.destroy();
+    this.chunks = [];
+    this.terrain.removeChildren();
+    this.chunkCols = Math.ceil(game.config.cols / CHUNK);
+    this.chunkRows = Math.ceil(game.config.rows / CHUNK);
+    for (let cy = 0; cy < this.chunkRows; cy++) {
+      for (let cx = 0; cx < this.chunkCols; cx++) {
+        const g = new Graphics();
+        this.terrain.addChild(g);
+        this.chunks.push({ g, sig: Number.NaN, x0: cx * CHUNK, y0: cy * CHUNK });
+      }
+    }
+  }
+
+  /**
+   * Per frame: visibility-cull chunks and restamp only those whose tile
+   * signature changed. The signature mixes each tile's visual code with a
+   * position hash so swaps/moves can't cancel out.
+   */
+  private syncTerrain(
     game: Game,
     ts: number,
     bounds: { minX: number; maxX: number; minY: number; maxY: number },
   ): void {
-    const g = this.gTerrain;
+    this.ensureChunks(game);
+    const c0 = Math.floor(bounds.minX / CHUNK);
+    const c1 = Math.floor(bounds.maxX / CHUNK);
+    const r0 = Math.floor(bounds.minY / CHUNK);
+    const r1 = Math.floor(bounds.maxY / CHUNK);
+
+    for (let cy = 0; cy < this.chunkRows; cy++) {
+      for (let cx = 0; cx < this.chunkCols; cx++) {
+        const chunk = this.chunks[cy * this.chunkCols + cx];
+        const visible = cx >= c0 && cx <= c1 && cy >= r0 && cy <= r1;
+        chunk.g.visible = visible;
+        if (!visible) continue;
+
+        const xEnd = Math.min(chunk.x0 + CHUNK, game.config.cols);
+        const yEnd = Math.min(chunk.y0 + CHUNK, game.config.rows);
+        let sig = 0;
+        for (let y = chunk.y0; y < yEnd; y++) {
+          for (let x = chunk.x0; x < xEnd; x++) {
+            const h = (x * 374761393 + y * 668265263) | 0;
+            sig = (sig + tileCode(game.tiles[y][x]) * (h | 1)) | 0;
+          }
+        }
+        if (sig !== chunk.sig) {
+          chunk.sig = sig;
+          this.stampChunk(game, chunk, ts, xEnd, yEnd);
+        }
+      }
+    }
+  }
+
+  /** Stamp one chunk: terrain/road/pad + survey tint + special + pip. */
+  private stampChunk(
+    game: Game,
+    chunk: TerrainChunk,
+    ts: number,
+    xEnd: number,
+    yEnd: number,
+  ): void {
+    const g = chunk.g;
     g.clear();
-    for (let y = bounds.minY; y <= bounds.maxY; y++) {
-      for (let x = bounds.minX; x <= bounds.maxX; x++) {
+    for (let y = chunk.y0; y < yEnd; y++) {
+      for (let x = chunk.x0; x < xEnd; x++) {
         const tile = game.tiles[y][x];
         const even = (x + y) % 2 === 0;
         const frame = tile.hasRoad
@@ -233,15 +383,41 @@ export class PixiRenderer {
           : tile.isPad
             ? "infra.pad"
             : terrainFrame(tile.terrain, even);
-        g.texture(texFor(frame), 0xffffff, x * ts, y * ts, ts, ts);
+        const px = x * ts;
+        const py = y * ts;
+        g.texture(texFor(frame), 0xffffff, px, py, ts, ts);
+
+        if (!tile.surveyed) continue;
+        const ov = prospectOverlay(tile.subsurface.prospect);
+        if (ov) g.rect(px, py, ts, ts).fill({ color: ov.c, alpha: ov.a });
+        if (tile.subsurface.special) {
+          g.rect(px + 2, py + 2, ts - 4, ts - 4).stroke({
+            width: 2,
+            color: P.special,
+            alpha: 0.8,
+          });
+        }
+        if (!tile.drilled) {
+          g.texture(
+            texFor(prospectPipFrame(tile.subsurface.prospect)),
+            0xffffff,
+            px + ts * 0.08,
+            py + ts * 0.06,
+            ts * 0.3,
+            ts * 0.34,
+          );
+        }
       }
     }
   }
 
+  // ------------------------------------------------------------------ infra
+
   /**
    * Pipes: thinner runs that reach into pipe neighbors AND snap into the
    * assets they serve. Live networks (wired to a battery / gas plant) are
-   * bright with a moving flow pulse; dead stubs render grey.
+   * bright with a moving flow pulse; dead stubs render grey. Redrawn per
+   * frame — the pulse animates and pipe counts stay small vs terrain.
    */
   private drawPipeTile(
     game: Game,
@@ -320,15 +496,58 @@ export class PixiRenderer {
     }
   }
 
-  /** Buildings: one Sprite per building + code-drawn fill bars on top. */
-  private syncBuildings(game: Game, ts: number): void {
+  // ----------------------------------------------------------------- labels
+
+  /** Upsert a pooled BitmapText. `size` = glyph height in world units. */
+  private setLabel(
+    key: string,
+    text: string,
+    x: number,
+    y: number,
+    size: number,
+    tint: number,
+  ): void {
+    let t = this.lPool.get(key);
+    if (!t) {
+      t = new BitmapText({ text, style: { fontFamily: FONT, fontSize: FONT_PX } });
+      this.labels.addChild(t);
+      this.lPool.set(key, t);
+    }
+    if (t.text !== text) t.text = text;
+    t.tint = tint;
+    t.position.set(x, y);
+    t.scale.set(size / FONT_PX);
+    this.lSeen.add(key);
+  }
+
+  /** Drop labels whose entity vanished (sold building, healed well, …). */
+  private sweepLabels(): void {
+    for (const [key, t] of this.lPool) {
+      if (!this.lSeen.has(key)) {
+        t.destroy();
+        this.lPool.delete(key);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------- buildings
+
+  /** Buildings: one Sprite per building (jack animates) + code fill bars. */
+  private syncBuildings(game: Game, ts: number, now: number, showLabels: boolean): void {
+    const wellById = new Map<string, Well>();
+    for (const w of game.wells) wellById.set(w.id, w);
+
     const seen = new Set<string>();
     for (const b of game.buildings) {
       if (b.kind === "gas_flare") continue; // fx layer
       seen.add(b.id);
       let s = this.bPool.get(b.id);
       if (!s) {
-        s = new Sprite(texFor(`building.${b.kind}`));
+        s = new Sprite(
+          b.kind === "pumpjack"
+            ? texFor("building.pumpjack.1")
+            : texFor(`building.${b.kind}`),
+        );
         this.buildings.addChildAt(s, 0); // under the state-bar Graphics
         this.bPool.set(b.id, s);
       }
@@ -336,6 +555,53 @@ export class PixiRenderer {
       s.width = (b.w ?? 1) * ts;
       s.height = (b.h ?? 1) * ts;
       s.alpha = b.online ? 1 : 0.4;
+
+      const well = b.wellId ? wellById.get(b.wellId) : undefined;
+      if (b.kind === "pumpjack") {
+        // Stroke cycle runs while the well flows; freezes when shut/offline.
+        let frame = 1;
+        if (b.online && well?.status === "producing" && !well.choked) {
+          frame = JACK_SEQ[Math.floor(now * 0.005 + (b.x * 3 + b.y * 5) * 0.37) % JACK_SEQ.length];
+        }
+        const tex = texFor(`building.pumpjack.${frame}`);
+        if (s.texture !== tex) s.texture = tex;
+        if (showLabels && well?.status === "producing") {
+          this.setLabel(
+            `bopd:${b.id}`,
+            `${well.oilRate.toFixed(0)} bopd`,
+            b.x * ts + 2,
+            b.y * ts - ts * 0.26,
+            ts * 0.24,
+            P.select,
+          );
+        }
+      } else if (showLabels) {
+        const fw = (b.w ?? 1) * ts;
+        const fh = (b.h ?? 1) * ts;
+        switch (b.kind) {
+          case "wellhead_tank":
+            this.setLabel(`n:${b.id}`, "TANK", b.x * ts + ts * 0.16, b.y * ts + ts * 0.02, ts * 0.18, P.select);
+            this.setLabel(
+              `v:${b.id}`,
+              `${b.oil.toFixed(0)}`,
+              b.x * ts + ts * 0.26,
+              b.y * ts + ts * 0.4,
+              ts * 0.2,
+              P.label,
+            );
+            break;
+          case "battery":
+            this.setLabel(`n:${b.id}`, "CRUDE", b.x * ts + fw * 0.06, b.y * ts + fh * 0.03, ts * 0.16, P.select);
+            this.setLabel(`n2:${b.id}`, "CLEAN", b.x * ts + fw * 0.56, b.y * ts + fh * 0.03, ts * 0.16, P.select);
+            break;
+          case "refinery":
+            this.setLabel(`n:${b.id}`, "REFINERY", b.x * ts + fw * 0.14, b.y * ts + fh * 0.42, ts * 0.22, P.select);
+            break;
+          case "gas_plant":
+            this.setLabel(`n:${b.id}`, "GAS PLANT", b.x * ts + fw * 0.1, b.y * ts + fh * 0.62, ts * 0.2, P.select);
+            break;
+        }
+      }
     }
     for (const [id, s] of this.bPool) {
       if (!seen.has(id)) {
@@ -378,7 +644,9 @@ export class PixiRenderer {
     }
   }
 
-  private drawWells(game: Game, ts: number): void {
+  // ------------------------------------------------------------------ wells
+
+  private drawWells(game: Game, ts: number, showLabels: boolean): void {
     const g = this.gWells;
     g.clear();
     for (const well of game.wells) {
@@ -393,23 +661,41 @@ export class PixiRenderer {
           -Math.PI / 2,
           -Math.PI / 2 + p * Math.PI * 2,
         ).stroke({ width: 2, color: P.rig });
+        if (showLabels) {
+          this.setLabel(
+            `w:${well.id}`,
+            `${Math.floor(p * 100)}%`,
+            px + ts * 0.3,
+            py + ts * 0.32,
+            ts * 0.26,
+            P.label,
+          );
+        }
       } else if (well.status === "duster") {
         g.moveTo(px + ts * 0.3, py + ts * 0.3)
           .lineTo(px + ts * 0.7, py + ts * 0.7)
           .moveTo(px + ts * 0.7, py + ts * 0.3)
           .lineTo(px + ts * 0.3, py + ts * 0.7)
           .stroke({ width: 2, color: P.duster });
+        if (showLabels) {
+          this.setLabel(`w:${well.id}`, "DUSTER", px + 2, py + ts * 0.72, ts * 0.2, P.dusterText);
+        }
       } else if (well.status === "producing" && well.choked) {
         g.rect(px + ts * 0.15, py + ts * 0.15, ts * 0.7, ts * 0.7).stroke({
           width: 2,
           color: P.danger,
         });
+        if (showLabels) {
+          this.setLabel(`w:${well.id}`, "SHUT", px + ts * 0.22, py + ts * 0.36, ts * 0.2, P.danger);
+        }
       }
     }
   }
 
+  // ------------------------------------------------------------------ units
+
   /** Units: Sprite pool; trucks rotate to heading, cargo bar drawn in code. */
-  private syncUnits(game: Game, ts: number): void {
+  private syncUnits(game: Game, ts: number, showLabels: boolean): void {
     const seen = new Set<string>();
     const g = this.gUnitState;
     g.clear();
@@ -431,6 +717,9 @@ export class PixiRenderer {
         if (Math.abs(ddx) > 0.01 || Math.abs(ddy) > 0.01) {
           s.rotation = Math.atan2(ddy, ddx);
         }
+      }
+      if (u.kind === "drill_rig" && showLabels) {
+        this.setLabel(`u:${u.id}`, `T${u.tier}`, u.x * ts + ts * 0.32, u.y * ts + ts * 0.34, ts * 0.26, P.rigText);
       }
 
       // Cargo bar (screen-aligned, above the truck — stays readable rotated).
@@ -456,7 +745,9 @@ export class PixiRenderer {
     }
   }
 
-  /** FX: flare sprites with a slow alpha/scale pulse (first "alive" motion). */
+  // -------------------------------------------------------------------- fx
+
+  /** FX: flare sprites with a slow alpha/scale pulse. */
   private syncFx(game: Game, ts: number, now: number): void {
     const seen = new Set<string>();
     for (const b of game.buildings) {
@@ -483,43 +774,16 @@ export class PixiRenderer {
     }
   }
 
-  private drawOverlays(
-    game: Game,
-    ts: number,
-    bounds: { minX: number; maxX: number; minY: number; maxY: number },
-    hover: { x: number; y: number } | null,
-  ): void {
+  // --------------------------------------------------------------- overlays
+
+  private drawHover(hover: { x: number; y: number } | null, ts: number): void {
     const g = this.gOverlays;
     g.clear();
-    for (let y = bounds.minY; y <= bounds.maxY; y++) {
-      for (let x = bounds.minX; x <= bounds.maxX; x++) {
-        const tile = game.tiles[y][x];
-        if (!tile.surveyed) continue;
-        const px = x * ts;
-        const py = y * ts;
-        const ov = prospectOverlay(tile.subsurface.prospect);
-        if (ov) g.rect(px, py, ts, ts).fill({ color: ov.c, alpha: ov.a });
-        if (tile.subsurface.special) {
-          g.rect(px + 2, py + 2, ts - 4, ts - 4).stroke({ width: 2, color: P.special, alpha: 0.8 });
-        }
-        if (!tile.drilled) {
-          g.texture(
-            texFor(prospectPipFrame(tile.subsurface.prospect)),
-            0xffffff,
-            px + ts * 0.08,
-            py + ts * 0.06,
-            ts * 0.3,
-            ts * 0.34,
-          );
-        }
-      }
-    }
-    if (hover) {
-      g.rect(hover.x * ts + 1, hover.y * ts + 1, ts - 2, ts - 2).stroke({
-        width: 2,
-        color: P.select,
-      });
-    }
+    if (!hover) return;
+    g.rect(hover.x * ts + 1, hover.y * ts + 1, ts - 2, ts - 2).stroke({
+      width: 2,
+      color: P.select,
+    });
   }
 
   private drawWeather(game: Game): void {
