@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "start": "serve dist -s -l tcp://0.0.0.0:${PORT:-3000}",
     "test": "esbuild smoke.ts --bundle --platform=node --format=esm --outfile=smoke.mjs && node smoke.mjs"
   },
   "devDependencies": {
@@ -16,6 +17,7 @@
   },
   "description": "Energy Epoch — oil lease builder / energy ops sim",
   "dependencies": {
-    "pixi.js": "^8.19.0"
+    "pixi.js": "^8.19.0",
+    "serve": "^14.2.6"
   }
 }

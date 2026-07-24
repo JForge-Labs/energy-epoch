@@ -39,3 +39,27 @@ Canvas 2D is the default. A **PixiJS (WebGL)** renderer scaffold is opt-in via `
 ## Later
 
 Refinery/treating capacity upgrades, pumps & compression, richer decline models.
+
+## Play (hosted)
+
+**Railway (primary):** https://energy-epoch-production.up.railway.app
+
+## Ship / engine plan
+
+**Path W (active):** web → PWA → Capacitor stores. No game servers.  
+**Path U (roadmap only):** Unity 6.5 if rewrite criteria are met.
+
+Full planning pack (point Claude here):
+
+```text
+docs/planning/
+```
+
+See `docs/planning/README.md`, `DECISION_LOCK.md`, and `AGENT_LANES.md`.
+
+### Redeploy (Railway)
+
+```bash
+# linked project: steadfast-determination / service energy-epoch
+railway up
+```
