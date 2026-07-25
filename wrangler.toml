@@ -15,14 +15,30 @@ routes = [
   { pattern = "playenergyepoch.com", custom_domain = true },
 ]
 
+# The Worker runs first on every request and serves static assets via ASSETS
+# for anything that isn't /api (magic-link auth + cloud saves).
+main = "worker/index.ts"
+
 [assets]
 directory = "./dist"
-# Single-page app: serve index.html for any unmatched path (and future client
-# routes / the auth callback page) instead of a 404.
+binding = "ASSETS"
+# Single-page app: serve index.html for any unmatched path.
 not_found_handling = "single-page-application"
+run_worker_first = true
 
-# --- Phase 2 (magic-link auth) will add, once we build /api: ---
-# main = "worker/index.ts"
-# [[d1_databases]]      # users, login_tokens, sessions, maps(seed)
-# [[kv_namespaces]]     # sessions (fast reads, native TTL)
-# [[r2_buckets]]        # gameplay save blobs (gzip'd)
+[vars]
+APP_URL = "https://playenergyepoch.com"
+# NOTE: from-address is PENDING domain confirmation (playenergyepoch.com vs the
+# playepochenergy.com the user typed). Must equal a Resend-verified domain.
+FROM_EMAIL = "landman@playenergyepoch.com"
+# Secret (set out-of-band, never committed): RESEND_API_KEY
+#   npx wrangler secret put RESEND_API_KEY
+
+[[d1_databases]]
+binding = "DB"
+database_name = "energy-epoch-db"
+database_id = "2f48a82f-1999-418f-bfc9-9f85ddfd82c9"
+
+[[r2_buckets]]
+binding = "SAVES"
+bucket_name = "energy-epoch-saves"
