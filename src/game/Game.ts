@@ -66,8 +66,8 @@ import {
 import {
   generateWorld,
   refineryAnchor,
-  starterBatteryAnchor,
-  starterPadAnchor,
+  starterBatteryFrom,
+  starterOrigin,
 } from "./systems/mapgen";
 import { findPath, hasDiagonalRoadOnly } from "./systems/pathfind";
 import { simulateProduction } from "./systems/production";
@@ -232,8 +232,15 @@ export class Game {
   }
 
   private seedFacilityPackage() {
-    const pad = starterPadAnchor();
-    const batt = starterBatteryAnchor();
+    // Same derivation (and same seed/params defaults) as generateWorld so both
+    // callers agree on the seed-varying origin.
+    const pad = starterOrigin(
+      this.config.cols,
+      this.config.rows,
+      this.config.seed ?? 7,
+      this.config.mapParams,
+    );
+    const batt = starterBatteryFrom(pad);
     const ref = refineryAnchor(this.config.cols, this.config.rows);
 
     this.tiles[pad.y][pad.x].isPad = true;

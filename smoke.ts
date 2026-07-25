@@ -4,10 +4,16 @@ import {
   CRUDE_PIPE_FLOW_BPD,
   GAS_PLANT_MCFD,
   GAS_PLANT_PREMIUM,
+  MAP_PRESETS,
   WELLHEAD_CAP_BBL,
 } from "./src/game/data/economy";
 import { simulateProduction } from "./src/game/systems/production";
-import { blocksBuild } from "./src/game/systems/terrain";
+import { blocksBuild, isOpen, rigCanEnter } from "./src/game/systems/terrain";
+import {
+  starterBatteryFrom,
+  starterFieldFrom,
+  starterOrigin,
+} from "./src/game/systems/mapgen";
 import type { Building, Well } from "./src/game/types";
 
 let failures = 0;
@@ -52,7 +58,11 @@ check("ample drill targets (>250 good+ tiles)", goodProspect > 250);
 check("oil spread across ≥3 quadrants", oilQuadrants.size >= 3);
 // Anti-trap: NO Good/Sweet oil on undrillable terrain (water/rock/creek).
 check("no drill-grade oil on impassable terrain", goodOffLand === 0);
-// A reachable Good+ land tile drillable at the T0 starter rig sits near the pad.
+// Anchor sites cleared to ground; buildings present.
+const battery = g.buildings.find((b) => b.kind === "battery")!;
+const refinery = g.buildings.find((b) => b.kind === "refinery")!;
+// A reachable Good+ land tile drillable at the T0 starter rig sits near the
+// (now seed-varying) battery.
 let starterFieldOk = false;
 for (let y = 0; y < rows && !starterFieldOk; y++)
   for (let x = 0; x < cols; x++) {
@@ -61,7 +71,7 @@ for (let y = 0; y < rows && !starterFieldOk; y++)
       openTerrain(ti.terrain) &&
       ti.subsurface.zone === 0 &&
       ti.subsurface.prospect >= 0.55 &&
-      Math.abs(x - 9) + Math.abs(y - 13) <= 14
+      Math.abs(x - battery.x) + Math.abs(y - battery.y) <= 14
     ) {
       starterFieldOk = true;
       break;
@@ -69,9 +79,6 @@ for (let y = 0; y < rows && !starterFieldOk; y++)
   }
 check("reachable zone-0 Good+ land field near the starter", starterFieldOk);
 
-// Anchor sites cleared to ground; buildings present.
-const battery = g.buildings.find((b) => b.kind === "battery")!;
-const refinery = g.buildings.find((b) => b.kind === "refinery")!;
 check("battery placed", !!battery && battery.w === 2 && battery.h === 2);
 check("refinery placed 2x2", !!refinery && refinery.w === 2 && refinery.h === 2);
 check("battery tile is buildable", !blocksBuild(g.tiles[battery.y][battery.x].terrain));
@@ -798,6 +805,84 @@ try {
   ok9 = false;
 }
 check("migrated old-lease save ticks without crashing", ok9);
+
+console.log("seed-varying starter: valid + reachable + reproducible per preset");
+// rig-BFS: open ground OR roaded tiles only (creek blocks unless bridged) — the
+// true reachability gate for the starter rig.
+function rigReaches(
+  gm: Game,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): boolean {
+  const { cols, rows } = gm.config;
+  const seen = new Set([`${from.x},${from.y}`]);
+  const q = [from];
+  while (q.length) {
+    const c = q.shift()!;
+    if (c.x === to.x && c.y === to.y) return true;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = c.x + dx;
+      const ny = c.y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      const k = `${nx},${ny}`;
+      if (seen.has(k)) continue;
+      if (!rigCanEnter(gm.tiles[ny][nx])) continue;
+      seen.add(k);
+      q.push({ x: nx, y: ny });
+    }
+  }
+  return false;
+}
+
+const seedSweep = [3, 17, 48, 101, 777, 2024];
+const startOrigins = new Set<string>();
+type StarterCase = { cols: number; rows: number; seed: number; params: { water: number; rock: number; oil: number } };
+const starterCases: StarterCase[] = [
+  ...MAP_PRESETS.filter((pp) => !pp.random).map((pp) => ({
+    cols: pp.cols,
+    rows: pp.rows,
+    seed: pp.seed,
+    params: pp.params,
+  })),
+  // A deliberately hostile water+rock-heavy smallest map, swept over seeds.
+  ...seedSweep.map((s) => ({ cols: 76, rows: 50, seed: s, params: { water: 1.9, rock: 1.9, oil: 0.8 } })),
+];
+for (const p of starterCases) {
+  const gm = new Game({ cols: p.cols, rows: p.rows, seed: p.seed, mapParams: p.params });
+  const o = starterOrigin(p.cols, p.rows, p.seed, p.params);
+  const b = starterBatteryFrom(o);
+  const f = starterFieldFrom(o);
+  const tag = `[${p.cols}x${p.rows}#${p.seed}]`;
+
+  check(`${tag} origin in band`, o.x >= 2 && o.x <= p.cols - 19 && o.y >= 2 && o.y <= p.rows - 12);
+
+  const bat = gm.buildings.find((bb) => bb.kind === "battery")!;
+  check(`${tag} battery == derived anchor`, !!bat && bat.x === b.x && bat.y === b.y);
+  check(`${tag} battery tile open`, isOpen(gm.tiles[b.y][b.x].terrain));
+  startOrigins.add(`${o.x},${o.y}`);
+
+  let fieldOk = false;
+  for (let dy = -3; dy <= 3 && !fieldOk; dy++)
+    for (let dx = -3; dx <= 3; dx++) {
+      const t = gm.tiles[f.y + dy]?.[f.x + dx];
+      if (t && isOpen(t.terrain) && t.subsurface.zone === 0 && t.subsurface.prospect >= 0.55) {
+        fieldOk = true;
+        break;
+      }
+    }
+  check(`${tag} zone-0 Good+ field at anchor`, fieldOk);
+  check(`${tag} rig reaches field`, rigReaches(gm, { x: o.x, y: o.y + 1 }, f));
+
+  const gm2 = new Game({ cols: p.cols, rows: p.rows, seed: p.seed, mapParams: p.params });
+  const bat2 = gm2.buildings.find((bb) => bb.kind === "battery")!;
+  check(`${tag} reproducible battery`, !!bat2 && bat2.x === b.x && bat2.y === b.y);
+}
+check("starter origin varies across seeds", startOrigins.size >= 4);
 
 console.log(failures === 0 ? "\nALL SMOKE CHECKS PASSED" : `\n${failures} SMOKE CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
