@@ -61,6 +61,7 @@ app.innerHTML = `
       </div>
     </div>
     <div class="hud-actions">
+      <button type="button" class="tool-btn" id="btn-account" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
       <button type="button" class="tool-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
       <select id="profile-select" class="profile-select" title="Save profile"></select>
       <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
@@ -570,6 +571,7 @@ function saveGame() {
       activeSaveKey(),
       JSON.stringify({
         v: SAVE_VERSION,
+        updatedAt: Date.now(),
         cam,
         spd: currentSpeed,
         mode: game.mode,
@@ -583,6 +585,7 @@ function saveGame() {
         game: game.serialize(),
       }),
     );
+    pushCloudSave();
   } catch {
     // storage full / unavailable — non-fatal, game keeps running in memory
   }
@@ -758,6 +761,135 @@ function deleteProfile() {
   flash(`Deleted "${name}". Now on "${profiles.active}".`);
   refreshProfileUI();
 }
+
+// ---- Cloud accounts (magic-link) + save sync. Best-effort & offline-first:
+//      every API call fails silently, so the game always works logged-out. ----
+let account: { email: string; name: string } | null = null;
+const accountBtn = document.querySelector<HTMLButtonElement>("#btn-account")!;
+
+async function gzip(str: string): Promise<Blob> {
+  const cs = new CompressionStream("gzip");
+  return await new Response(new Blob([str]).stream().pipeThrough(cs)).blob();
+}
+async function gunzip(blob: Blob): Promise<string> {
+  const ds = new DecompressionStream("gzip");
+  return await new Response(blob.stream().pipeThrough(ds)).text();
+}
+
+function refreshAccountUI() {
+  accountBtn.textContent = account ? account.name || account.email.split("@")[0] : "Sign in";
+  accountBtn.classList.toggle("active", !!account);
+  accountBtn.title = account
+    ? `Signed in as ${account.email}. Games & maps sync to the cloud. Click to sign out.`
+    : "Sign in with a magic link to save your games & maps to the cloud.";
+}
+
+async function apiMe(): Promise<boolean> {
+  try {
+    const r = await fetch("/api/me");
+    account = r.ok ? await r.json() : null;
+  } catch {
+    account = null;
+  }
+  refreshAccountUI();
+  return !!account;
+}
+
+// Debounced cloud push of the active profile's save blob (gzip'd).
+let cloudPushTimer = 0;
+function pushCloudSave() {
+  if (!account) return;
+  if (cloudPushTimer) window.clearTimeout(cloudPushTimer);
+  cloudPushTimer = window.setTimeout(async () => {
+    try {
+      const raw = localStorage.getItem(activeSaveKey());
+      if (!raw) return;
+      await fetch(`/api/saves/${encodeURIComponent(profiles.active)}`, {
+        method: "PUT",
+        headers: {
+          "x-map": encodeURIComponent(game.config.mapName ?? "Prairie"),
+          "x-save-version": String(SAVE_VERSION),
+        },
+        body: await gzip(raw),
+      });
+    } catch {
+      /* offline — stays local */
+    }
+  }, 3000);
+}
+
+// Pull cloud saves and merge (last-write-wins by updatedAt). Reloads the active
+// profile only if the cloud copy is newer, so live play isn't disrupted.
+async function pullCloudSaves() {
+  if (!account) return;
+  try {
+    const r = await fetch("/api/saves");
+    if (!r.ok) return;
+    const { saves } = (await r.json()) as { saves: { slot: string; updatedAt: number }[] };
+    let listChanged = false;
+    let activeUpdated = false;
+    for (const s of saves) {
+      const key = `${SAVE_PREFIX}:${s.slot}`;
+      const localRaw = localStorage.getItem(key);
+      const localTs = localRaw ? (JSON.parse(localRaw).updatedAt ?? 0) : -1;
+      if (s.updatedAt <= localTs) continue;
+      const blobR = await fetch(`/api/saves/${encodeURIComponent(s.slot)}`);
+      if (!blobR.ok) continue;
+      localStorage.setItem(key, await gunzip(await blobR.blob()));
+      if (!profiles.names.includes(s.slot)) {
+        profiles.names.push(s.slot);
+        listChanged = true;
+      }
+      if (s.slot === profiles.active) activeUpdated = true;
+    }
+    if (listChanged) {
+      saveProfiles();
+      refreshProfileUI();
+    }
+    if (activeUpdated) bootGame(true);
+  } catch {
+    /* offline */
+  }
+}
+
+accountBtn.addEventListener("click", async () => {
+  if (account) {
+    if (window.confirm("Sign out? Local saves stay on this device.")) {
+      try {
+        await fetch("/api/logout", { method: "POST" });
+      } catch {
+        /* ignore */
+      }
+      account = null;
+      refreshAccountUI();
+      flash("Signed out. Local play still works.");
+    }
+    return;
+  }
+  const email = window.prompt("Email for cloud saves (we'll send a sign-in link):")?.trim();
+  if (!email) return;
+  try {
+    await fetch("/api/auth/request", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    flash("Check your email for the sign-in link (expires in 15 min).");
+  } catch {
+    flash("Cloud saves need the deployed site — can't reach the server here.");
+  }
+});
+
+// On load: pick up an existing session (and welcome after a fresh sign-in).
+apiMe().then((signedIn) => {
+  if (signedIn) {
+    pullCloudSaves();
+    if (new URLSearchParams(location.search).has("signedin")) {
+      flash(`Signed in as ${account?.email}. Your games & maps now sync.`);
+      history.replaceState(null, "", location.pathname);
+    }
+  }
+});
 
 document.querySelector("#btn-home")!.addEventListener("click", () => {
   const p = game.recenterHint();

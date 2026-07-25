@@ -254,8 +254,10 @@ export default {
         if (req.method === "GET") {
           const obj = await env.SAVES.get(key);
           if (!obj) return json({ error: "not found" }, 404);
+          // Raw gzip bytes (NOT Content-Encoding: gzip — the browser would then
+          // auto-decompress and the client's manual gunzip would double-fail).
           return new Response(obj.body, {
-            headers: { "content-type": "application/octet-stream", "content-encoding": "gzip" },
+            headers: { "content-type": "application/octet-stream" },
           });
         }
         if (req.method === "PUT") {

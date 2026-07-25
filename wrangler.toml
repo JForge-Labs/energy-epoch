@@ -28,8 +28,7 @@ run_worker_first = true
 
 [vars]
 APP_URL = "https://playenergyepoch.com"
-# NOTE: from-address is PENDING domain confirmation (playenergyepoch.com vs the
-# playepochenergy.com the user typed). Must equal a Resend-verified domain.
+# Must equal the Resend-verified domain (confirmed: playenergyepoch.com).
 FROM_EMAIL = "landman@playenergyepoch.com"
 # Secret (set out-of-band, never committed): RESEND_API_KEY
 #   npx wrangler secret put RESEND_API_KEY
