@@ -163,7 +163,7 @@ app.innerHTML = `
         <button class="tool-btn action" data-tool="move_rig" type="button">Move rig</button>
         <button class="tool-btn action" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
         <button class="tool-btn action" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
-        <button class="tool-btn action" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn action" data-tool="gas_line" type="button">Incinerator · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
       </div>
       <div class="tool-group" data-tab="build" hidden>
         <button class="tool-btn" data-tool="road" type="button">Road</button>
@@ -563,7 +563,7 @@ const LATCHED = new Set<BuildTool>([
 ]);
 const TOOL_LABEL: Record<string, string> = {
   select: "Select", drill: "Drill", choke: "Shut in", move_rig: "Move rig",
-  explore: "Explore", add_tank: "Tank", gas_line: "Gas line", road: "Road",
+  explore: "Explore", add_tank: "Tank", gas_line: "Incinerator", road: "Road",
   oil_pipe: "Oil pipe", gas_pipe: "Gas pipe", battery: "Battery",
   gas_plant: "Gas Refinery", refinery: "Refinery", sell: "Sell",
 };
@@ -1312,7 +1312,7 @@ document.querySelector("#rep-wrap")!.addEventListener("click", () => {
       : r < 25
         ? `Rep ${r.toFixed(0)} CRITICAL — shutdown near. Stop flaring, fix spills/stranded tanks.`
         : r < 45
-          ? `Rep ${r.toFixed(0)} — fines active. Gas lines + haul crude to cut flare.`
+          ? `Rep ${r.toFixed(0)} — fines active. Incinerators + haul crude to cut flare.`
           : `Rep ${r.toFixed(0)} — OK. Flaring and spills still chip it down.`;
   flash(msg);
   inspectBody.textContent = msg;
@@ -1883,7 +1883,7 @@ function openContextMenu(
       label: well.choked ? "Bring well online" : "Shut in well",
       act: () => game.toggleChoke(tile.x, tile.y),
     });
-    items.push({ label: `Gas line (${k(GAS_LINE_COST)})`, act: () => game.placeGasLine(tile.x, tile.y) });
+    items.push({ label: `Incinerator (${k(GAS_LINE_COST)})`, act: () => game.placeGasLine(tile.x, tile.y) });
   }
   if (b?.kind === "wellhead_tank") {
     items.push({ label: `Add tank (${k(ADD_TANK_COST)})`, act: () => game.addTank(tile.x, tile.y) });

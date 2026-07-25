@@ -331,11 +331,11 @@ export class Game {
       battery: "Place a 2×1 tank battery — more crude treating (crude→clean).",
       refinery: "Place a 2×2 refinery — another daily sales slot.",
       add_tank: "Click a wellhead tank to add crude storage — fewer overflows between hauls.",
-      sell: "Scrap a road, pipe, gas line, plant, battery, refinery, or truck — 75%.",
+      sell: "Scrap a road, pipe, incinerator, plant, battery, refinery, or truck — 75%.",
       choke: "Click a well to shut it in / bring it back — throttle inflow.",
       truck: "Buy a 400 bbl haul truck.",
       small_truck: "Buy a cheaper 200 bbl haul truck.",
-      gas_line: "Gas takeaway near a well — stop flare, sell gas.",
+      gas_line: "Incinerator — tie in a well's gas to kill the flare.",
       explore: "Survey a 3×3 (9 tiles). Colors show strike odds — drill Good/Sweet.",
       upgrade_rig: "Higher tier → deeper zones.",
       pay_debt: "Pay principal from cash.",
@@ -904,7 +904,7 @@ export class Game {
         const refund = refundOf(GAS_LINE_COST);
         this.buildings = this.buildings.filter((o) => o.id !== b.id);
         this.player.cash += refund;
-        this.ledger.push(this.market.day, "other", "Gas line salvage", refund);
+        this.ledger.push(this.market.day, "other", "Incinerator salvage", refund);
         // Flare comes back on for the well this line served.
         for (const f of this.buildings) {
           if (
@@ -915,7 +915,7 @@ export class Game {
             f.online = true;
           }
         }
-        this.message = `Scrapped gas line, +$${refund.toLocaleString()}. Flare back on.`;
+        this.message = `Scrapped incinerator, +$${refund.toLocaleString()}. Flare back on.`;
         return true;
       }
       if (b.kind === "gas_plant") {
@@ -976,7 +976,7 @@ export class Game {
       return true;
     }
 
-    this.message = "Nothing sellable here — roads, pipe, gas line, plant, or extra trucks.";
+    this.message = "Nothing sellable here — roads, pipe, incinerator, plant, or extra trucks.";
     return false;
   }
 
@@ -1414,7 +1414,7 @@ export class Game {
 
   placeGasLine(clickX: number, clickY: number): boolean {
     if (this.player.cash < GAS_LINE_COST) {
-      this.message = `Gas line costs $${GAS_LINE_COST.toLocaleString()}.`;
+      this.message = `Incinerator costs $${GAS_LINE_COST.toLocaleString()}.`;
       return false;
     }
 
@@ -1436,12 +1436,12 @@ export class Game {
       return false;
     }
     if (bestWellDist > 4) {
-      this.message = "Click closer to a producing well to run its gas line.";
+      this.message = "Click closer to a producing well to place its incinerator.";
       return false;
     }
     // One takeaway per wellhead — don't stack redundant gas lines.
     if (this.wellHasGasLine(well)) {
-      this.message = "That wellhead already has a gas line — one takeaway per well.";
+      this.message = "That wellhead already has an incinerator — one per well.";
       return false;
     }
 
@@ -1475,7 +1475,7 @@ export class Game {
     this.ledger.push(
       this.market.day,
       "capex",
-      `Gas line ${target.x},${target.y}`,
+      `Incinerator ${target.x},${target.y}`,
       -GAS_LINE_COST,
     );
     this.buildings.push({
@@ -2814,7 +2814,7 @@ export class Game {
       return { level: "warn", msg: `Near treating capacity (${treatCeiling}/day) — add a battery/truck/pipe before drilling more.` };
     }
     if (this.player.reputation < 45) {
-      return { level: "warn", msg: `Reputation ${this.player.reputation.toFixed(0)} — cut flaring (gas line/plant) and spills.` };
+      return { level: "warn", msg: `Reputation ${this.player.reputation.toFixed(0)} — cut flaring (incinerator/plant) and spills.` };
     }
     return { level: "ok", msg: "Operations nominal." };
   }
@@ -3023,11 +3023,11 @@ export class Game {
     if (r < 10 && this.repStage > 10) {
       this.repStage = 10;
       this.message = `Reputation in freefall${safe}. Stop flaring/spills NOW.`;
-      this.guide = "REP <10: gas lines, clean spills, fix haul routes — recover above 0.";
+      this.guide = "REP <10: incinerators, clean spills, fix haul routes — recover above 0.";
     } else if (r < 20 && this.repStage > 20) {
       this.repStage = 20;
       this.message = `CRITICAL reputation (<20)${safe} — fines mounting.`;
-      this.guide = "REP CRITICAL: build gas lines/plant, clear stranded tanks.";
+      this.guide = "REP CRITICAL: build incinerators/plant, clear stranded tanks.";
     } else if (r < 30 && this.repStage > 30) {
       this.repStage = 30;
       this.message = "Reputation warning (<30) — regulators watching. Flaring/spills hurting.";
