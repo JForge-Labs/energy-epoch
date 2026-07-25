@@ -1,4 +1,4 @@
-import type { Subsurface, Tile, ZoneTier } from "../types";
+import type { MapParams, Subsurface, Tile, ZoneTier } from "../types";
 import { blocksBuild, isOpen } from "./terrain";
 
 function hash(x: number, y: number, seed: number): number {
@@ -6,6 +6,10 @@ function hash(x: number, y: number, seed: number): number {
   n = (n ^ (n >>> 13)) * 1274126177;
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }
+
+/** Absolute tile home of the guaranteed near-starter oil field (relative to the
+ *  fixed pad/battery anchors, so it's the same short haul on every map size). */
+const STARTER_FIELD = { x: 19, y: 16 };
 
 function zoneFor(dist: number): ZoneTier {
   if (dist < 0.22) return 0;
@@ -26,16 +30,19 @@ function prospectField(
   cols: number,
   rows: number,
   seed: number,
+  oil: number,
 ): number {
   // Scale field sizes with the map so bigger leases aren't mostly barren.
-  const s = Math.sqrt((cols * rows) / (40 * 24));
+  // `oil` widens/narrows the fields for rich vs sparse presets (clamped so a
+  // sparse map still has a viable near-starter field).
+  const s = Math.sqrt((cols * rows) / (40 * 24)) * Math.max(0.7, Math.min(1.5, oil));
   // Fractional district centers, chosen so one sits near the starter package
   // (zone 0, early oil) and the rest span outward into higher zones.
-  const districts = [
-    { cx: 0.24, cy: 0.33 }, // near starter — zone 0, early oil
-    { cx: 0.7, cy: 0.24 }, //  NE — zone 1
-    { cx: 0.24, cy: 0.82 }, // SW — zone 1
-    { cx: 0.86, cy: 0.84 }, // SE far — zone 2, richer late-game field
+  const districts: { ax?: number; ay?: number; cx?: number; cy?: number }[] = [
+    { ax: STARTER_FIELD.x, ay: STARTER_FIELD.y }, // fixed near the starter (zone 0)
+    { cx: 0.7, cy: 0.24 }, //  NE
+    { cx: 0.24, cy: 0.82 }, // SW
+    { cx: 0.86, cy: 0.84 }, // SE far — richer late-game field
   ];
   let best = 0;
   for (let d = 0; d < districts.length; d++) {
@@ -43,8 +50,8 @@ function prospectField(
     // Per-district jitter so no two maps place a field identically.
     const jx = (hash(d + 11, seed, seed) - 0.5) * 3.0;
     const jy = (hash(d + 29, seed, seed) - 0.5) * 3.0;
-    const bx = dd.cx * cols + jx;
-    const by = dd.cy * rows + jy;
+    const bx = (dd.ax ?? dd.cx! * cols) + jx;
+    const by = (dd.ay ?? dd.cy! * rows) + jy;
     // Two overlapping pockets give each field an organic, non-circular shape.
     const cores = [
       { cx: bx, cy: by, w: 3.8 * s },
@@ -69,6 +76,7 @@ function makeSubsurface(
   cols: number,
   rows: number,
   seed: number,
+  oil: number,
 ): Subsurface {
   const n = hash(x, y, seed);
   const n2 = hash(x + 17, y + 91, seed + 3);
@@ -76,7 +84,7 @@ function makeSubsurface(
   const cy = rows * 0.5;
   const dist = Math.hypot(x - cx, y - cy) / Math.hypot(cols, rows);
   const zone = zoneFor(dist + (n - 0.5) * 0.06);
-  const prospect = Math.max(0, Math.min(1, prospectField(x, y, cols, rows, seed)));
+  const prospect = Math.max(0, Math.min(1, prospectField(x, y, cols, rows, seed, oil)));
   const special = zone >= 2 && n2 > 0.55;
 
   return {
@@ -104,20 +112,31 @@ function blobField(
   return best;
 }
 
-/** Assign obstacle terrain (rock ridges, lakes, a winding creek). */
-function assignTerrain(tiles: Tile[][], cols: number, rows: number, seed: number) {
+/** Assign obstacle terrain (rock ridges, lakes, a winding creek). `rockMul`/
+ *  `waterMul` widen or shrink the blobs so presets range from open prairie to
+ *  water-choked bayou or rocky badlands. */
+function assignTerrain(
+  tiles: Tile[][],
+  cols: number,
+  rows: number,
+  seed: number,
+  rockMul: number,
+  waterMul: number,
+) {
   // Scale obstacle blobs with the map so they stay proportionate.
   const s = Math.sqrt((cols * rows) / (40 * 24));
+  const rk = s * Math.max(0.4, Math.min(2, rockMul));
+  const wt = s * Math.max(0.4, Math.min(2, waterMul));
   const rock = [
-    { cx: cols * 0.7, cy: rows * 0.22, w: 3.4 * s },
-    { cx: cols * 0.8, cy: rows * 0.32, w: 2.8 * s },
-    { cx: cols * 0.3, cy: rows * 0.85, w: 3.0 * s },
-    { cx: cols * 0.62, cy: rows * 0.55, w: 2.4 * s },
+    { cx: cols * 0.7, cy: rows * 0.22, w: 3.4 * rk },
+    { cx: cols * 0.8, cy: rows * 0.32, w: 2.8 * rk },
+    { cx: cols * 0.3, cy: rows * 0.85, w: 3.0 * rk },
+    { cx: cols * 0.62, cy: rows * 0.55, w: 2.4 * rk },
   ];
   const water = [
-    { cx: cols * 0.55, cy: rows * 0.8, w: 3.2 * s },
-    { cx: cols * 0.85, cy: rows * 0.68, w: 2.6 * s },
-    { cx: cols * 0.2, cy: rows * 0.28, w: 2.4 * s },
+    { cx: cols * 0.55, cy: rows * 0.8, w: 3.2 * wt },
+    { cx: cols * 0.85, cy: rows * 0.68, w: 2.6 * wt },
+    { cx: cols * 0.2, cy: rows * 0.28, w: 2.4 * wt },
   ];
 
   for (let y = 0; y < rows; y++) {
@@ -176,7 +195,12 @@ function clearSite(tiles: Tile[][], cx: number, cy: number, r: number) {
   }
 }
 
-export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
+export function generateWorld(
+  cols: number,
+  rows: number,
+  seed = 7,
+  params: MapParams = { water: 1, rock: 1, oil: 1 },
+): Tile[][] {
   const tiles: Tile[][] = [];
   for (let y = 0; y < rows; y++) {
     const row: Tile[] = [];
@@ -185,7 +209,7 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
       row.push({
         surface: n > 0.72 ? "scrub" : "ground",
         terrain: n > 0.72 ? "scrub" : "ground",
-        subsurface: makeSubsurface(x, y, cols, rows, seed),
+        subsurface: makeSubsurface(x, y, cols, rows, seed, params.oil),
         surveyed: false,
         drilled: false,
         wellId: null,
@@ -196,7 +220,7 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
     tiles.push(row);
   }
 
-  assignTerrain(tiles, cols, rows, seed);
+  assignTerrain(tiles, cols, rows, seed, params.rock, params.water);
 
   // Keep the financed sites on clear ground and guarantee a buildable route.
   const pad = starterPadAnchor();
@@ -208,16 +232,19 @@ export function generateWorld(cols: number, rows: number, seed = 7): Tile[][] {
   carveCorridor(tiles, pad, batt);
   carveCorridor(tiles, batt, ref);
 
-  // Guarantee the tutorial can succeed: the near-starter oil district must sit
-  // on drillable LAND. A water/rock blob overlapping it strands every Good/Sweet
-  // tile (the exact new-player trap: "6 Sweet, 3 Good" all on impassable water).
-  // Clear its core to ground and carve a buildable route from the battery.
-  const starterField = {
-    x: Math.round(cols * 0.24),
-    y: Math.round(rows * 0.33),
-  };
+  // Guarantee the tutorial can succeed on EVERY map size: the near-starter oil
+  // field sits at a fixed spot a short haul from the battery, on cleared land,
+  // and is FORCED to zone 0 so the T0 starter rig can always drill it (on big
+  // maps the distance-based zones would otherwise push it to zone 1+).
+  const starterField = STARTER_FIELD;
   clearSite(tiles, starterField.x, starterField.y, 3);
   carveCorridor(tiles, batt, starterField);
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const t = tiles[starterField.y + dy]?.[starterField.x + dx];
+      if (t) t.subsurface.zone = 0;
+    }
+  }
 
   // No drillable oil grade on undrillable terrain (water/rock/creek — only open
   // ground and scrub can be spudded, per canDrill). A Sweet tile you can't reach

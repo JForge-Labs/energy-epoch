@@ -195,7 +195,12 @@ export class Game {
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.tiles = generateWorld(this.config.cols, this.config.rows);
+    this.tiles = generateWorld(
+      this.config.cols,
+      this.config.rows,
+      this.config.seed,
+      this.config.mapParams,
+    );
     this.player = {
       cash: this.config.startingCash,
       reputation: 72,

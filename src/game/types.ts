@@ -184,12 +184,26 @@ export type BuildTool =
  *  interest accrues AND the lease shuts in on rep 0 or sustained insolvency. */
 export type GameMode = "easy" | "hard";
 
+/** Per-map generation dials (multipliers, 1 = baseline). Give presets character:
+ *  water-heavy bayous, rocky badlands, oil-rich basins, etc. */
+export interface MapParams {
+  water: number;
+  rock: number;
+  oil: number;
+}
+
 export interface GameConfig {
   cols: number;
   rows: number;
   tileSize: number;
   startingCash: number;
   tickSeconds: number;
+  /** Worldgen seed — deterministic map. Omitted → legacy default (7). */
+  seed?: number;
+  /** Terrain/oil dials for this map. Omitted → baseline (all 1). */
+  mapParams?: MapParams;
+  /** Human label for the chosen map (shown in HUD, saved for the cloud). */
+  mapName?: string;
 }
 
 export interface SpillEvent {

@@ -10,6 +10,8 @@ import {
   GAS_LINE_COST,
   GAS_PIPE_COST,
   GAS_PLANT_COST,
+  MAP_PRESETS,
+  type MapPreset,
   OIL_PIPE_COST,
   PERMIT_COST,
   REFINERY_COST,
@@ -21,7 +23,7 @@ import {
 } from "./game/data/economy";
 import { canvasToTile, renderGame } from "./game/render";
 import type { PixiRenderer } from "./game/renderPixi";
-import type { BuildTool } from "./game/types";
+import type { BuildTool, GameConfig } from "./game/types";
 
 const COST: Partial<Record<BuildTool, number>> = {
   explore: EXPLORE_COST,
@@ -106,6 +108,12 @@ app.innerHTML = `
         <h2>Lease shut in</h2>
         <p id="gameover-reason"></p>
         <button type="button" class="tool-btn active" id="btn-reset-go">Reset lease</button>
+      </div>
+    </div>
+    <div class="map-picker" id="map-picker" hidden>
+      <div class="map-picker-card">
+        <h2>Choose your lease</h2>
+        <div class="map-list" id="map-list"></div>
       </div>
     </div>
   </div>
@@ -565,6 +573,13 @@ function saveGame() {
         cam,
         spd: currentSpeed,
         mode: game.mode,
+        map: {
+          name: game.config.mapName ?? "Prairie",
+          seed: game.config.seed,
+          cols: game.config.cols,
+          rows: game.config.rows,
+          params: game.config.mapParams,
+        },
         game: game.serialize(),
       }),
     );
@@ -603,6 +618,13 @@ function loadGame(): boolean {
     // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
     if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
     else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
+    // Map identity (tiles themselves come from applyState; this is for display
+    // + the cloud). config is mutable field-wise even though the ref is readonly.
+    if (snap.map) {
+      game.config.mapName = snap.map.name;
+      game.config.seed = snap.map.seed;
+      game.config.mapParams = snap.map.params;
+    }
     return true;
   } catch {
     return false;
@@ -630,9 +652,16 @@ function setSpeed(s: number) {
   });
 }
 
-// Construct a fresh Game, optionally restoring the active profile's save.
-function bootGame(restore: boolean): boolean {
-  game = new Game();
+// Turn a picked preset into a Game config (Random rolls a fresh seed).
+function presetToConfig(p: MapPreset): Partial<GameConfig> {
+  const seed = p.random ? Math.floor(Math.random() * 1_000_000_000) : p.seed;
+  const name = p.random ? `Random #${seed}` : p.name;
+  return { cols: p.cols, rows: p.rows, seed, mapParams: p.params, mapName: name };
+}
+
+// Construct a fresh Game (optionally with a chosen map), else restore the save.
+function bootGame(restore: boolean, config?: Partial<GameConfig>): boolean {
+  game = new Game(config);
   game.timeScale = currentSpeed;
   cam = createCamera(game.config.cols, game.config.rows);
   clearConfirm();
@@ -645,11 +674,32 @@ function bootGame(restore: boolean): boolean {
   return restored;
 }
 
+const mapPickerEl = document.querySelector<HTMLDivElement>("#map-picker")!;
+// Show the map picker and start a fresh lease with the chosen preset.
+function showMapPicker(onPick: (cfg: Partial<GameConfig>) => void) {
+  const list = document.querySelector<HTMLDivElement>("#map-list")!;
+  list.innerHTML = "";
+  for (const p of MAP_PRESETS) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "map-choice";
+    card.innerHTML = `<strong>${p.name}</strong><span>${p.blurb}</span>`;
+    card.addEventListener("click", () => {
+      mapPickerEl.hidden = true;
+      onPick(presetToConfig(p));
+    });
+    list.appendChild(card);
+  }
+  mapPickerEl.hidden = false;
+}
+
 function resetLease() {
-  localStorage.removeItem(activeSaveKey());
-  bootGame(false);
-  flash("Lease reset. Build cardinal roads pad→battery→refinery, then drill.");
-  saveGame();
+  showMapPicker((cfg) => {
+    localStorage.removeItem(activeSaveKey());
+    bootGame(false, cfg);
+    flash(`New ${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+    saveGame();
+  });
 }
 
 function refreshProfileUI() {
@@ -685,10 +735,12 @@ function newProfile() {
   profiles.names.push(name);
   profiles.active = name;
   saveProfiles();
-  bootGame(false);
-  saveGame();
-  flash(`Created profile "${name}".`);
   refreshProfileUI();
+  showMapPicker((cfg) => {
+    bootGame(false, cfg);
+    saveGame();
+    flash(`Created "${name}" on ${cfg.mapName}.`);
+  });
 }
 
 function deleteProfile() {
@@ -1537,11 +1589,16 @@ function frame(now: number) {
 const restored = loadGame();
 refreshProfileUI();
 syncAll();
-flash(
-  restored
-    ? `Profile "${profiles.active}" restored. Autosaves as you play.`
-    : "Cardinal roads only (N/E/S/W). Costly tools need a second click to confirm. Ops/Rep are clickable.",
-);
+if (restored) {
+  flash(`Profile "${profiles.active}" restored. Autosaves as you play.`);
+} else {
+  // First run on this profile — let the player choose their lease.
+  showMapPicker((cfg) => {
+    bootGame(false, cfg);
+    saveGame();
+    flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+  });
+}
 requestAnimationFrame(frame);
 
 // Persist periodically and on tab hide / reload so progress survives refreshes.

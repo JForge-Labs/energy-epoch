@@ -1,4 +1,4 @@
-import type { ZoneTier } from "../types";
+import type { MapParams, ZoneTier } from "../types";
 
 /** Base wellhead tank — a standard 400 bbl tank (= one tanker load). */
 export const WELLHEAD_CAP_BBL = 400;
@@ -114,6 +114,32 @@ export const DEFAULT_CONFIG = {
   startingCash: STARTING_WORKING_CASH,
   tickSeconds: 0.2,
 } as const;
+
+/** Baseline terrain/oil dials (1 = neutral). */
+export const DEFAULT_MAP_PARAMS: MapParams = { water: 1, rock: 1, oil: 1 };
+
+export interface MapPreset {
+  id: string;
+  name: string;
+  blurb: string;
+  cols: number;
+  rows: number;
+  seed: number;
+  params: MapParams;
+  /** Random rolls a fresh seed at pick time (handled in the UI layer). */
+  random?: boolean;
+}
+
+/** Curated, selectable maps + a Random entry. All ≥ 40 wide/28 tall so the
+ *  fixed starter anchors (pad 4,8 / battery 9,13) stay in bounds. */
+export const MAP_PRESETS: MapPreset[] = [
+  { id: "prairie", name: "Prairie", blurb: "Balanced starter lease — open ground, fair oil.", cols: 80, rows: 52, seed: 7, params: { water: 1, rock: 1, oil: 1 } },
+  { id: "bayou", name: "Bayou", blurb: "Water everywhere — bridge and route around the lakes.", cols: 80, rows: 52, seed: 21, params: { water: 1.9, rock: 0.5, oil: 1.1 } },
+  { id: "badlands", name: "Badlands", blurb: "Rock ridges and lean rock — hunt the sweet spots.", cols: 84, rows: 54, seed: 33, params: { water: 0.4, rock: 1.9, oil: 0.8 } },
+  { id: "wildcat", name: "Wildcat Basin", blurb: "Oil-rich — big fields, race your logistics.", cols: 76, rows: 50, seed: 48, params: { water: 0.8, rock: 0.8, oil: 1.5 } },
+  { id: "frontier", name: "Frontier", blurb: "A large, wide-open lease — room to build an empire.", cols: 96, rows: 60, seed: 60, params: { water: 1.1, rock: 1.1, oil: 1.1 } },
+  { id: "random", name: "Random", blurb: "Roll a fresh, unseen lease every time.", cols: 80, rows: 52, seed: 7, params: { water: 1, rock: 1, oil: 1 }, random: true },
+];
 
 /** Simple wildcat vs surveyed outcomes */
 

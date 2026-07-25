@@ -694,6 +694,28 @@ console.log("drill queue (add / toggle-cancel / cap at 6)");
   check("toggle cancels a queued drill", gq.drillQueue.length === 5);
 }
 
+console.log("map presets: config threads through + reproducible");
+{
+  const gp = new Game({ cols: 76, rows: 50, seed: 48, mapParams: { water: 0.8, rock: 0.8, oil: 1.5 } });
+  check(
+    "preset config sizes the grid",
+    gp.config.cols === 76 && gp.config.rows === 50 && gp.tiles.length === 50 && gp.tiles[0].length === 76,
+  );
+  check("preset seed threads into config", gp.config.seed === 48);
+  const a = new Game({ cols: 80, rows: 52, seed: 21, mapParams: { water: 1.9, rock: 0.5, oil: 1.1 } });
+  const b = new Game({ cols: 80, rows: 52, seed: 21, mapParams: { water: 1.9, rock: 0.5, oil: 1.1 } });
+  const c = new Game({ cols: 80, rows: 52, seed: 999 });
+  let same = true;
+  let diff = 0;
+  for (let y = 0; y < 52; y++)
+    for (let x = 0; x < 80; x++) {
+      if (a.tiles[y][x].terrain !== b.tiles[y][x].terrain) same = false;
+      if (a.tiles[y][x].terrain !== c.tiles[y][x].terrain) diff++;
+    }
+  check("same config → reproducible terrain", same);
+  check("different seed → different terrain", diff > 50);
+}
+
 console.log("difficulty modes: easy never shuts in; hard has grace + bankruptcy");
 {
   // EASY: reputation at 0 must never end the game.

@@ -739,6 +739,65 @@ body {
   line-height: 1.4;
 }
 
+/* Map picker — start-of-lease overlay listing the selectable maps. */
+.map-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 21;
+  background: rgba(8, 10, 8, 0.82);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.map-picker[hidden] {
+  display: none;
+}
+.map-picker-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--amber);
+  padding: 1.1rem 1.25rem;
+  max-width: min(560px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+}
+.map-picker-card h2 {
+  font-family: var(--font-display);
+  color: var(--amber);
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+.map-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.55rem;
+}
+.map-choice {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: left;
+  background: #141916;
+  border: 1px solid var(--bg-panel-edge);
+  color: var(--text);
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.map-choice:hover {
+  border-color: var(--amber);
+  background: #1a221c;
+}
+.map-choice strong {
+  color: var(--amber-hot);
+  font-size: 0.85rem;
+}
+.map-choice span {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
 .bottom-bar {
   display: flex;
   flex-wrap: wrap;
