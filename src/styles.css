@@ -971,6 +971,27 @@ body {
     max-height: 46vh;
     overflow: auto;
   }
+
+  /* Select/deselect floats top-right — always thumb-reachable without swiping
+     the toolbar back to its start (it's removed from the toolbar row flow). */
+  .bottom-bar .tool-group[data-group="mode"] {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 3rem);
+    right: 0.5rem;
+    z-index: 12;
+    padding: 0;
+    border: none;
+  }
+  .bottom-bar .tool-group[data-group="mode"] .tool-btn {
+    background: rgba(16, 20, 18, 0.92);
+    border: 1px solid var(--amber);
+    padding: 0.4rem 0.75rem;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+  /* Nudge the SCADA chip down so it clears the floating Select button. */
+  .dash-panel {
+    top: 3.4rem;
+  }
 }
 
 /* Landscape phones have very little height — squeeze the bars further so the
