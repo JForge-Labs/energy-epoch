@@ -124,37 +124,32 @@ export default {
       const host = (req.headers.get("host") ?? url.hostname).toLowerCase();
       const isApp = host.startsWith("app.");
       if (!isApp) {
-        // Landing domain: marketing page for most navigations; allow real static
-        // HTML (privacy, etc.) through to ASSETS. Prefer Host header (correct
-        // under wrangler dev too). Extensionless /landing is the marketing root.
+        // Landing domain. The apex root + /landing ALWAYS resolve to the
+        // marketing page, no-store, REGARDLESS of Accept/method — otherwise a
+        // non-navigation hit (bot / link prefetch) serves + edge-caches the game
+        // index at the apex, poisoning it for every visitor. Other static HTML
+        // (privacy) still passes through on a normal navigation.
+        const path = url.pathname.replace(/\/$/, "") || "/";
+        const landingHtml = async (asset: string) => {
+          const page = await env.ASSETS.fetch(new Request(new URL(asset, url).toString()));
+          return new Response(page.body, {
+            status: page.status,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
+            },
+          });
+        };
+        if (req.method === "GET" && (path === "/" || path === "/landing" || path === "/landing.html")) {
+          return landingHtml("/landing");
+        }
         const accept = req.headers.get("accept") ?? "";
-        if (req.method === "GET" && accept.includes("text/html")) {
-          const path = url.pathname.replace(/\/$/, "") || "/";
-          if (path === "/privacy" || path === "/privacy.html") {
-            const page = await env.ASSETS.fetch(
-              new Request(new URL("/privacy.html", url).toString()),
-            );
-            return new Response(page.body, {
-              status: page.status,
-              headers: {
-                "content-type": "text/html; charset=utf-8",
-                "cache-control": "no-store",
-              },
-            });
-          }
-          if (path === "/" || path === "/landing" || path === "/landing.html") {
-            const page = await env.ASSETS.fetch(
-              new Request(new URL("/landing", url).toString()),
-            );
-            return new Response(page.body, {
-              status: page.status,
-              headers: {
-                "content-type": "text/html; charset=utf-8",
-                "cache-control": "no-store",
-              },
-            });
-          }
-          // Other HTML paths: try ASSETS first (static pages), else landing.
+        if (
+          req.method === "GET" &&
+          accept.includes("text/html") &&
+          (path === "/privacy" || path === "/privacy.html")
+        ) {
+          return landingHtml("/privacy.html");
         }
       }
       return env.ASSETS.fetch(req);
