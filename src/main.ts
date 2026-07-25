@@ -49,11 +49,11 @@ app.innerHTML = `
       <div id="rep-wrap" class="clickable" title="Reputation (0–100). Low rep brings fines, then a shut-in order at 0. Falls from flaring and spills. Click for status.">Rep <strong id="stat-rep">70</strong></div>
       <div id="ops-wrap" class="clickable" title="Operating status. GREEN = revenue beats interest + opex. RED = losing money. Click for the exact reason.">Ops <strong id="stat-ops">—</strong></div>
       <div title="Days elapsed on the lease.">Day <strong id="stat-day">1</strong></div>
+      <div id="wx-wrap" class="wx-wrap" title="Weather — affects haul speed & drilling"><strong id="stat-wx" class="wx-icon" aria-label="weather">☀️</strong></div>
       <div class="metrics-more" id="metrics-more" data-open="false">
         <div>Debt <strong id="stat-debt">$0</strong></div>
         <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
         <div title="Live crude price ($/bbl).">Oil <strong id="stat-oil">$0</strong></div>
-        <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
       </div>
       <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats" aria-label="More stats">⋯</button>
       <div class="speed-ctl" title="Time speed">
@@ -1954,12 +1954,15 @@ function syncHud() {
     ? "var(--ok)"
     : "var(--danger)";
   const wx = game.weather.kind;
-  document.querySelector("#stat-wx")!.textContent =
+  const wxIcon = wx === "clear" ? "☀️" : wx === "lightning_cell" ? "⛈️" : "🌧️";
+  const wxText =
     wx === "clear"
-      ? "clear"
+      ? "Clear skies"
       : wx === "lightning_cell"
-        ? "lightning (drill stand-down)"
-        : `storm (slow haul)`;
+        ? "Lightning — drilling stands down"
+        : "Storm — slow haul";
+  document.querySelector("#stat-wx")!.textContent = wxIcon;
+  (document.querySelector("#wx-wrap") as HTMLElement).title = wxText;
 }
 
 function syncDash() {

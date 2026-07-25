@@ -764,6 +764,16 @@ body {
   border-color: var(--steel);
 }
 
+/* Weather icon (replaces the "Wx" text readout). */
+.wx-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.wx-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
 /* Dismissible inspect hint. */
 .inspect-hint {
   display: flex;
