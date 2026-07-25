@@ -56,6 +56,7 @@ app.innerHTML = `
         <div title="Live crude price ($/bbl).">Oil <strong id="stat-oil">$0</strong></div>
       </div>
       <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats" aria-label="More stats">⋯</button>
+      <button type="button" class="metrics-toggle" id="inspect-toggle" title="Inspect tooltip (press I) — hover tiles for details" aria-label="Toggle inspect tooltip">ⓘ</button>
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
         <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
@@ -1090,8 +1091,8 @@ type UiState = {
   metricsCollapsed?: boolean;
   // objectives — sticky per-step latches + retire flag
   objExplore?: boolean; objDrill?: boolean; objRoad?: boolean; objectivesDone?: boolean;
-  // dismissible inspect hint (false once dismissed)
-  inspectHint?: boolean;
+  // inspect tooltip toggle (undefined/true = on, false = off) — hotkey "i"
+  inspectTip?: boolean;
 };
 // The overlay-panel collapse flags (all boolean) — used by the generic
 // collapse loops, which mustn't touch the non-boolean keys (tab, etc.).
@@ -1111,6 +1112,7 @@ function saveUi() {
   }
 }
 const uiState = loadUi();
+const inspectOn = () => uiState.inspectTip ?? true; // hover tooltip on by default
 // Mobile: start the overlay panels collapsed to chips so the map isn't buried
 // under them (one tap on a title opens it). Triage stays visible — it's the
 // guide. Only defaults when the user hasn't chosen, so it respects prior taps.
@@ -1212,6 +1214,23 @@ document.getElementById("metrics-toggle")?.addEventListener("click", () => {
   applyMetrics();
   saveUi();
 });
+
+// --- Inspect tooltip toggle (hotkey "i" + HUD ⓘ button) ---------------------
+function applyInspectToggle() {
+  document.getElementById("inspect-toggle")?.classList.toggle("active", inspectOn());
+}
+function toggleInspect() {
+  uiState.inspectTip = !inspectOn();
+  saveUi();
+  applyInspectToggle();
+  flash(
+    inspectOn()
+      ? "Inspect tooltip ON — hover a tile for details (I)"
+      : "Inspect tooltip OFF — ⓘ marks the cursor (press I to turn on)",
+  );
+}
+applyInspectToggle();
+document.getElementById("inspect-toggle")?.addEventListener("click", toggleInspect);
 
 // --- Objectives card (replaces the money-loop banner) -----------------------
 // Sticky ||= latches so scrapping infra mid-tutorial never un-completes a step.
@@ -1713,8 +1732,15 @@ canvas.addEventListener("pointermove", (e) => {
 
   hover = canvasToTile(canvas, game, cam, e.clientX, e.clientY);
   if (hover) {
-    const text = game.inspectAt(hover.x, hover.y);
-    hoverTip.textContent = text;
+    if (inspectOn()) {
+      hoverTip.textContent = game.inspectAt(hover.x, hover.y);
+      hoverTip.classList.remove("tip-mini");
+    } else {
+      // Toggled off: a small ⓘ trails the cursor to remind that inspect is a
+      // press-"i" away, without covering the map with text.
+      hoverTip.textContent = "ⓘ";
+      hoverTip.classList.add("tip-mini");
+    }
     hoverTip.style.display = "block";
     const wrap = canvas.parentElement!.getBoundingClientRect();
     // Top-left of pointer/selection so a right-hand Apple Pencil grip
@@ -1807,6 +1833,7 @@ window.addEventListener("keydown", (e) => {
     cam.y = p.y;
   }
   if (e.key === "c") toggleAllPanels();
+  if (e.key === "i" || e.key === "I") toggleInspect();
   clampCamera(cam, game.config.cols, game.config.rows);
 });
 

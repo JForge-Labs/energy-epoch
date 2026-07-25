@@ -134,6 +134,15 @@ body {
   line-height: 1.35;
   pointer-events: none;
 }
+/* Inspect toggled off: the tip shrinks to a small ⓘ reminder on the cursor. */
+.hover-tip.tip-mini {
+  max-width: none;
+  padding: 0.05rem 0.25rem;
+  background: rgba(12, 16, 14, 0.8);
+  border-color: rgba(212, 160, 23, 0.5);
+  color: var(--amber-hot);
+  font-size: 0.95rem;
+}
 
 .inspect-panel {
   position: absolute;
@@ -762,6 +771,11 @@ body {
 .metrics-toggle:hover {
   color: var(--amber-hot);
   border-color: var(--steel);
+}
+.metrics-toggle.active {
+  color: var(--amber-hot);
+  border-color: var(--amber);
+  background: #242018;
 }
 
 /* Weather icon (replaces the "Wx" text readout). */
