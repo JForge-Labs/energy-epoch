@@ -129,7 +129,25 @@ function confirmPage(token: string): Response {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+
+    // Host split: the app subdomain serves the game SPA; the root/apex domain
+    // serves the marketing landing page (never the game bundle). /api/* is
+    // shared by both (the landing's Sign in and the app both call it).
+    if (!url.pathname.startsWith("/api/")) {
+      // Prefer the Host header (correct in prod AND under `wrangler dev`, where
+      // url.hostname is just 127.0.0.1).
+      const host = (req.headers.get("host") ?? url.hostname).toLowerCase();
+      const isApp = host.startsWith("app.");
+      if (!isApp) {
+        // Landing domain: return the marketing page for any navigation; let its
+        // own assets (favicon, etc.) pass through to the static bucket.
+        const accept = req.headers.get("accept") ?? "";
+        if (req.method === "GET" && accept.includes("text/html")) {
+          return env.ASSETS.fetch(new Request(new URL("/landing.html", url).toString()));
+        }
+      }
+      return env.ASSETS.fetch(req);
+    }
 
     try {
       const now = Date.now();

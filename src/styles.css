@@ -755,6 +755,66 @@ body {
 }
 
 /* Map picker — start-of-lease overlay listing the selectable maps. */
+/* Blocking sign-in gate — the app requires an account to play. */
+.signin-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: radial-gradient(900px 500px at 60% -10%, #1c2413 0%, rgba(8, 10, 8, 0.96) 60%);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.signin-gate[hidden] {
+  display: none;
+}
+.signin-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--amber);
+  border-radius: 14px;
+  padding: 1.8rem 1.6rem;
+  max-width: min(420px, 94vw);
+  text-align: center;
+}
+.signin-card h2 {
+  font-family: var(--font-display);
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  margin: 0 0 0.5rem;
+}
+.signin-card p {
+  color: var(--text-dim, #9aa392);
+  font-size: 0.92rem;
+  margin: 0 0 1.1rem;
+}
+.signin-card form {
+  display: grid;
+  gap: 0.6rem;
+}
+.signin-card input {
+  font: inherit;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--amber);
+  background: #0d1109;
+  color: var(--text, #e8ece6);
+  text-align: center;
+}
+.signin-card .gate-status {
+  color: var(--amber);
+  min-height: 1.2em;
+  margin: 0.9rem 0 0.4rem;
+  font-size: 0.88rem;
+}
+.signin-card .gate-home {
+  color: var(--text-dim, #9aa392);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+.signin-card .gate-home:hover {
+  color: var(--amber);
+}
+
 .map-picker {
   position: absolute;
   inset: 0;

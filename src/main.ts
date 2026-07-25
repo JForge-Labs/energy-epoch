@@ -118,6 +118,18 @@ app.innerHTML = `
         <div class="map-list" id="map-list"></div>
       </div>
     </div>
+    <div class="signin-gate" id="signin-gate" hidden>
+      <div class="signin-card">
+        <h2>ENERGY EPOCH</h2>
+        <p>Sign in to play — we'll email you a one-tap link. Your maps and games save to the cloud and follow you across devices.</p>
+        <form id="gate-form">
+          <input type="email" id="gate-email" placeholder="you@example.com" autocomplete="email" required />
+          <button type="submit" class="tool-btn active" id="gate-submit">Send sign-in link</button>
+        </form>
+        <p class="gate-status" id="gate-status"></p>
+        <a class="gate-home" href="https://playenergyepoch.com/">← Back to home</a>
+      </div>
+    </div>
   </div>
   <footer class="bottom-bar">
     <div class="tool-group" data-group="mode">
@@ -814,15 +826,31 @@ async function ensureGamertag() {
   }
 }
 
-async function apiMe(): Promise<boolean> {
+// "in" = signed in · "out" = reachable but no session (gate) · "offline" =
+// couldn't reach the API (dev server, outage) → fail open so play isn't blocked.
+type AuthState = "in" | "out" | "offline";
+const gateEl = document.querySelector<HTMLDivElement>("#signin-gate")!;
+function showGate(show: boolean) {
+  gateEl.hidden = !show;
+}
+
+async function apiMe(): Promise<AuthState> {
   try {
     const r = await fetch("/api/me");
-    account = r.ok ? await r.json() : null;
+    if (r.status === 401) {
+      account = null;
+      refreshAccountUI();
+      return "out";
+    }
+    if (!r.ok) throw new Error("unreachable");
+    account = await r.json(); // throws on non-JSON (dev server HTML) → offline
+    refreshAccountUI();
+    return "in";
   } catch {
     account = null;
+    refreshAccountUI();
+    return "offline";
   }
-  refreshAccountUI();
-  return !!account;
 }
 
 // Debounced cloud push of the active profile's save blob (gzip'd).
@@ -910,15 +938,42 @@ accountBtn.addEventListener("click", async () => {
   }
 });
 
-// On load: pick up an existing session (and welcome after a fresh sign-in).
-apiMe().then((signedIn) => {
-  if (signedIn) {
+// On load: check the session and either open the game, gate it, or fail open.
+apiMe().then((state) => {
+  if (state === "in") {
+    showGate(false);
     pullCloudSaves();
     ensureGamertag();
     if (new URLSearchParams(location.search).has("signedin")) {
       flash(`Signed in as ${account?.name || account?.email}. Your games & maps now sync.`);
       history.replaceState(null, "", location.pathname);
     }
+  } else if (state === "out") {
+    // Deployed, reachable, no session → require sign-in to play the full game.
+    showGate(true);
+  } else {
+    showGate(false); // offline / dev — keep playing locally.
+  }
+});
+
+// Gate sign-in form (mirrors the HUD Sign in flow, but blocking).
+const gateForm = document.querySelector<HTMLFormElement>("#gate-form")!;
+const gateStatus = document.querySelector<HTMLElement>("#gate-status")!;
+gateForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.querySelector<HTMLInputElement>("#gate-email")!.value.trim();
+  if (!email) return;
+  gateStatus.textContent = "Sending…";
+  try {
+    await fetch("/api/auth/request", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    gateStatus.textContent =
+      "Link sent! Check your email — and your spam folder. Expires in 15 min.";
+  } catch {
+    gateStatus.textContent = "Couldn't reach the server. Try again in a moment.";
   }
 });
 
