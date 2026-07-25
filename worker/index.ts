@@ -140,10 +140,17 @@ export default {
       const isApp = host.startsWith("app.");
       if (!isApp) {
         // Landing domain: return the marketing page for any navigation; let its
-        // own assets (favicon, etc.) pass through to the static bucket.
+        // own assets (favicon, etc.) pass through to the static bucket. Fetch
+        // the EXTENSIONLESS /landing (Cloudflare Assets 307-redirects .html to
+        // its extensionless form), and serve it no-store so the apex root can
+        // never get pinned to a stale cached game index at the edge.
         const accept = req.headers.get("accept") ?? "";
         if (req.method === "GET" && accept.includes("text/html")) {
-          return env.ASSETS.fetch(new Request(new URL("/landing.html", url).toString()));
+          const page = await env.ASSETS.fetch(new Request(new URL("/landing", url).toString()));
+          return new Response(page.body, {
+            status: page.status,
+            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+          });
         }
       }
       return env.ASSETS.fetch(req);
