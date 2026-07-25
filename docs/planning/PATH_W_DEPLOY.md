@@ -1,36 +1,34 @@
 # Path W — Deploy plan (active)
 
-Pure client static game. **No hosted game compute.** Server only serves files (CDN).
+Pure client static game. **No hosted game compute.** CDN only serves files.
 
 ```
 Vite build → dist/
-    ├── Phase A: Static URL (mobile browser)     $0
-    ├── Phase B: PWA (install + offline)         $0
-    ├── Phase C: Capacitor Android               $0–$25 Play
-    └── Phase D: Capacitor iOS → TestFlight/Store  $99/yr Apple
+    ├── Phase A: Cloudflare Worker + playenergyepoch.com   $0
+    ├── Phase B: PWA (install + offline)                   $0
+    ├── Phase C: Capacitor Android                         $0–$25 Play
+    └── Phase D: Capacitor iOS → TestFlight/Store            $99/yr Apple
 ```
 
-**Primary (Railway, Path W):** https://energy-epoch-production.up.railway.app  
-Optional GitHub Pages (may lag): https://jfodchuk.github.io/energy-epoch/
+**Primary:** https://playenergyepoch.com  
 
-### Railway link (this machine)
+Config: `wrangler.toml` (Workers static assets from `./dist`).  
+Deploy: `npm run build && npx wrangler deploy` (or GitHub Actions).
 
-| | |
-|--|--|
-| Project | `steadfast-determination` (`bed2d934-f737-4351-8f2b-7b3fa9eafeda`) |
-| Service | `energy-epoch` |
-| Config | `railway.toml` (Railpack + `npm run build`; `npm start` → `serve dist`) |
-| Redeploy from local | `railway up` (from repo root, already linked) |
-| GitHub source | `jfodchuk/energy-epoch` branch **`cleanup/qa-fixes`** (retargeted 2026-07-24) |
-| Auto-deploy | Pushes to **`cleanup/qa-fixes`** should trigger Railway; **`main` will not** until branch is changed back |
-| Vite base | **`/`** only (never `/energy-epoch/` on Railway) |
+### Host history
 
-### Pipeline gotchas
+| Host | Status |
+|------|--------|
+| **Cloudflare Worker** | **Active** — custom domain + workers.dev staging |
+| Railway (`steadfast-determination` / `energy-epoch`) | **Decommissioned** 2026-07-24 — static-only, no state |
+| GitHub Pages | Optional / legacy; needs `base: '/energy-epoch/'` if used |
 
-1. Claude ships on `cleanup/qa-fixes`, not `main` — Railway must watch that branch (done) or patches never auto-land.
-2. GitHub Pages (`/energy-epoch/` base) is a **different** host; visual changes there ≠ Railway.
-3. Hard refresh if assets look sticky (`Ctrl+Shift+R`); hashed filenames change every build.
-4. Gate before ship: `npm test && npm run build` (interest smoke assumes Hard mode default **off**).
+### Pipeline notes
+
+1. Vite `base` stays **`/`** for the apex domain Worker.  
+2. Hard refresh after deploys (`Ctrl+Shift+R`); hashed asset filenames change every build.  
+3. Gate: `npm test && npm run build` before ship.  
+4. Auth (later): D1 / KV / R2 on Cloudflare — see `wrangler.toml` stubs. Do **not** reintroduce Railway for static hosting.
 
 ---
 
@@ -42,17 +40,14 @@ Optional GitHub Pages (may lag): https://jfodchuk.github.io/energy-epoch/
 |------|--------|
 | Artifact | `npm run build` → `dist/` |
 | Gate | `npm test` then `npm run build` |
-| Host options | **Railway** (active target) · GitHub Pages (optional) · Cloudflare Pages |
-| Base path | GH project pages need Vite `base: '/energy-epoch/'` (or equivalent). Root domain → `base: '/'` |
-| Deploy mechanism | Restore `gh-pages` script **or** GitHub Action on `main` (preferred long-term) |
-
-**Do not block gameplay on perfect CI.** When ship is requested: one reliable path is enough.
+| Host | **Cloudflare Worker** (`wrangler.toml`) |
+| Domain | `playenergyepoch.com` |
+| Base path | `/` |
 
 ### A acceptance
 
-- [ ] Fresh clone → install → test → build succeeds  
-- [ ] Deployed URL loads on a real phone  
-- [ ] Core loop playable with touch (tap / pan / zoom)  
+- [x] Deployed URL loads on a real phone  
+- [x] Core loop playable with touch (tap / pan / zoom)  
 
 ---
 
@@ -86,12 +81,9 @@ Optional GitHub Pages (may lag): https://jfodchuk.github.io/energy-epoch/
 | Sideload | Free (itch, Discord, site) |
 | Play Store | ~$25 one-time developer fee |
 
-Prefer packaging assets (offline) over TWA-that-needs-network-only.
-
 ### C acceptance
 
 - [ ] APK installs and runs offline  
-- [ ] Same save behavior as web (or documented migration)  
 
 ---
 
@@ -100,41 +92,9 @@ Prefer packaging assets (offline) over TWA-that-needs-network-only.
 | Item | Detail |
 |------|--------|
 | Tool | Capacitor iOS project |
-| Requirements | Apple Developer **$99/yr**, Mac + Xcode for build/sign |
+| Requirements | Apple Developer **$99/yr**, Mac + Xcode |
 | Ladder | TestFlight → free App Store listing |
-| Not required for free web launch | |
 
 ### D acceptance
 
 - [ ] TestFlight build runs on a physical iPhone  
-- [ ] Privacy copy accurate: no accounts; data on device  
-
----
-
-## Cost summary (Path W)
-
-| Stage | Host/compute | Fees |
-|-------|--------------|------|
-| A–B | $0 | $0 |
-| C Play | $0 servers | ~$25 once |
-| D App Store | $0 servers | $99/yr Apple |
-| Domain (optional) | — | ~$10–15/yr |
-
----
-
-## Implementation order (when user prioritizes ship work)
-
-1. Reliable build + correct `base` + deploy path (Action or script)  
-2. Mobile layout / safe-area / touch targets (may overlap Claude UX work — coordinate)  
-3. PWA + icons  
-4. Save export/import  
-5. Capacitor Android  
-6. iOS when Apple account + Mac ready  
-
-**Gameplay agents:** skip this list unless asked. See AGENT_LANES.md.
-
----
-
-## Architecture note for later Path U
-
-Path W `dist/` and Capacitor are **not** thrown away as marketing: even after a Unity rewrite, a static site can remain the free browser demo **or** be retired. Do not dual-implement features in both engines.

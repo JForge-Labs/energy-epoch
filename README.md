@@ -2,6 +2,12 @@
 
 Factorio-style energy ops on a **$5M credit facility**. Build **roads** from wells to **tank batteries** to the **refinery**. Wildcat with simple random outcomes. Pay interest, protect reputation, operate in the green.
 
+## Play (hosted)
+
+**https://playenergyepoch.com**
+
+Cloudflare Worker (static assets from `dist/`). Staging may also use the project’s `*.workers.dev` URL when `workers_dev = true` in `wrangler.toml`.
+
 ## Run
 
 ```bash
@@ -12,6 +18,16 @@ npm run dev      # PixiJS (WebGL) renderer by default
 npm test         # headless smoke test of the game systems
 npm run build    # typecheck + production build
 ```
+
+## Deploy (Cloudflare)
+
+```bash
+npm run build
+npx wrangler deploy
+# or: npm run deploy
+```
+
+Requires Cloudflare auth (`wrangler login` or CI secrets). Domain and asset config live in `wrangler.toml`.
 
 ## Start package (financed)
 
@@ -30,7 +46,7 @@ npm run build    # typecheck + production build
 
 ## Terrain
 
-40×24 lease with **rock**, **water** (impassable), and **creeks** (bridge to cross). A buildable corridor between the financed sites is always guaranteed.
+Lease map with **rock**, **water** (impassable), and **creeks** (bridge to cross). A buildable corridor between the financed sites is always guaranteed.
 
 ## Renderers
 
@@ -38,15 +54,11 @@ npm run build    # typecheck + production build
 
 ## Later
 
-Refinery/treating capacity upgrades, pumps & compression, richer decline models.
-
-## Play (hosted)
-
-**Railway (primary):** https://energy-epoch-production.up.railway.app
+Refinery/treating capacity upgrades, pumps & compression, richer decline models. Optional magic-link auth on Cloudflare (D1/KV/R2) — see `wrangler.toml` comments.
 
 ## Ship / engine plan
 
-**Path W (active):** web → PWA → Capacitor stores. No game servers.  
+**Path W (active):** Cloudflare Worker static host → PWA → Capacitor stores. No game servers.  
 **Path U (roadmap only):** Unity 6.5 if rewrite criteria are met.
 
 Full planning pack (point Claude here):
@@ -56,10 +68,3 @@ docs/planning/
 ```
 
 See `docs/planning/README.md`, `DECISION_LOCK.md`, and `AGENT_LANES.md`.
-
-### Redeploy (Railway)
-
-```bash
-# linked project: steadfast-determination / service energy-epoch
-railway up
-```

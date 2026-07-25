@@ -95,7 +95,7 @@ ATLAS PACK (TexturePacker / free-tex-packer / Pixi tools)
 PIXI DEFAULT RENDERER (sprites + layers + animation)
         │
         ▼
-PERF + MOBILE SOAK → Railway
+PERF + MOBILE SOAK → Cloudflare (playenergyepoch.com)
 ```
 
 ### Renderer decision (locked recommendation)
@@ -167,7 +167,7 @@ Generate the **entire set** under one style (see models below). Output:
 - Outline contrast pass for night-ish ground  
 - Mobile GPU profile (iPhone mid + Android mid)  
 - Bundle size check; compress to WebP/AVIF if needed  
-- Railway deploy soak  
+- Cloudflare deploy soak (`wrangler deploy`)
 
 **Total calendar estimate:** ~1 hard week for a strong pass with AI art + one focused coding agent; 2 weeks if polish-heavy.
 
@@ -191,7 +191,7 @@ Generate the **entire set** under one style (see models below). Output:
 |------|--------|---------------------|
 | **1 — Best** | **Claude Opus 4.x (or Sonnet 4.x if cost-capped)** with full repo context | Best at multi-file Pixi refactors, keeping sim/render split, careful mobile edge cases |
 | **2** | **GPT-5 / o-series high-reasoning** | Strong planner/implementer; good for atlas pipeline scripts |
-| **3** | **Grok (this stack)** | Good for orchestration, Railway, planning, review; pair with Opus for the heavy Pixi rewrite if you want max one-pass quality |
+| **3** | **Grok (this stack)** | Good for orchestration, Cloudflare deploy, planning, review; pair with Opus for the heavy Pixi rewrite if you want max one-pass quality |
 
 **Recommendation:**  
 - **Art:** Flux/MJ/Imagine **with locked style ref**.  
@@ -272,7 +272,7 @@ If you want **maximum detail** (full anim sets, road autotile set, weather parti
 | FPS mid phone default zoom | ≥ 30 stable, prefer 60 desktop |
 | Artifact coverage | 100% of drawn sim entities are sprite-based |
 | Tests | `npm test` green; manual road/truck/treat smoke |
-| Deploy | Railway still static; no new server cost |
+| Deploy | Cloudflare Worker static assets; no game server cost |
 
 ---
 

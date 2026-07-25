@@ -18,14 +18,14 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | ID | Milestone | Status | Notes |
 |----|-----------|--------|-------|
 | S1 | `npm test` + `npm run build` clean on mainline | done | Local gate green 2026-07-24 |
-| S2 | Reliable static deploy + correct `base` `/` | done | Railway: https://energy-epoch-production.up.railway.app |
-| S2b | Auto-deploy tracks Claude branch | done | Source branch → `cleanup/qa-fixes` (was stuck on `main`) |
-| S3 | Phone playtest on deployed URL | todo | User: open Railway URL on phone |
+| S2 | Reliable static deploy + correct `base` `/` | done | Cloudflare Worker: https://playenergyepoch.com |
+| S2b | Auto-deploy tracks active branch | done | CF/GitHub Actions (not Railway) |
+| S3 | Phone playtest on deployed URL | done | playenergyepoch.com |
 | S4 | PWA install + offline session | todo | |
 | S5 | Save export/import JSON | todo | Before stores |
 | S6 | Capacitor Android APK | todo | |
 | S7 | iOS TestFlight | todo | Needs Apple + Mac |
-| S8 | Optional custom domain | todo | CF Pages nice |
+| S8 | Custom domain | done | playenergyepoch.com on Cloudflare |
 
 ## Path U — only after trigger
 
@@ -49,3 +49,5 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-24 | Railway source branch → `cleanup/qa-fixes` (was `main`; Claude patches weren't auto-landing) |
 | 2026-07-24 | Smoke test fixed for Hard-mode interest default off; prod redeployed (`index-HSmv40DC.js`) |
 | 2026-07-24 | Graphics scaffold: branch `graphics/pixi-atlas-v1` pushed (Pixi default, atlas stub); Railway still on `cleanup/qa-fixes` |
+| 2026-07-24 | Cloudflare Worker primary host: playenergyepoch.com |
+| 2026-07-24 | Railway project `steadfast-determination` decommissioned; removed railway.toml + serve; docs point at Cloudflare |
