@@ -366,6 +366,21 @@ body {
   min-width: 0;
 }
 
+/* Signed-in gamertag chip, sits next to the Sign out button. */
+.account-tag {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #d4a017;
+  background: rgba(212, 160, 23, 0.12);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .profile-select {
   background: #141916;
   color: var(--amber-hot);

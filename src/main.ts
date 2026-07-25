@@ -61,6 +61,7 @@ app.innerHTML = `
       </div>
     </div>
     <div class="hud-actions">
+      <span id="account-tag" class="account-tag" hidden></span>
       <button type="button" class="tool-btn" id="btn-account" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
       <button type="button" class="tool-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
       <select id="profile-select" class="profile-select" title="Save profile"></select>
@@ -776,12 +777,41 @@ async function gunzip(blob: Blob): Promise<string> {
   return await new Response(blob.stream().pipeThrough(ds)).text();
 }
 
+const accountTag = document.querySelector<HTMLElement>("#account-tag")!;
 function refreshAccountUI() {
-  accountBtn.textContent = account ? account.name || account.email.split("@")[0] : "Sign in";
+  if (account) {
+    accountBtn.textContent = "Sign out";
+    accountBtn.title = `Signed in as ${account.name || account.email} (${account.email}). Games & maps sync to the cloud. Click to sign out.`;
+    accountTag.textContent = `🎮 ${account.name || account.email.split("@")[0]}`;
+    accountTag.hidden = false;
+  } else {
+    accountBtn.textContent = "Sign in";
+    accountBtn.title = "Sign in with a magic link to save your games & maps to the cloud.";
+    accountTag.hidden = true;
+  }
   accountBtn.classList.toggle("active", !!account);
-  accountBtn.title = account
-    ? `Signed in as ${account.email}. Games & maps sync to the cloud. Click to sign out.`
-    : "Sign in with a magic link to save your games & maps to the cloud.";
+}
+
+// First sign-in: ask for a gamertag (display name) and save it to the account.
+async function ensureGamertag() {
+  if (!account || account.name) return;
+  const name = window
+    .prompt("Choose a gamertag for your account:", account.email.split("@")[0])
+    ?.trim();
+  if (!name) return;
+  try {
+    const r = await fetch("/api/profile", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (r.ok) {
+      account.name = (await r.json()).name;
+      refreshAccountUI();
+    }
+  } catch {
+    /* offline */
+  }
 }
 
 async function apiMe(): Promise<boolean> {
@@ -874,7 +904,7 @@ accountBtn.addEventListener("click", async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email }),
     });
-    flash("Check your email for the sign-in link (expires in 15 min).");
+    flash("Sign-in link sent — check your email (and your spam folder). Expires in 15 min.");
   } catch {
     flash("Cloud saves need the deployed site — can't reach the server here.");
   }
@@ -884,8 +914,9 @@ accountBtn.addEventListener("click", async () => {
 apiMe().then((signedIn) => {
   if (signedIn) {
     pullCloudSaves();
+    ensureGamertag();
     if (new URLSearchParams(location.search).has("signedin")) {
-      flash(`Signed in as ${account?.email}. Your games & maps now sync.`);
+      flash(`Signed in as ${account?.name || account?.email}. Your games & maps now sync.`);
       history.replaceState(null, "", location.pathname);
     }
   }
@@ -1703,20 +1734,49 @@ function syncAll() {
 }
 
 let last = performance.now();
+let lastFrameAt = last; // watchdog heartbeat
+let rafId = 0;
 function frame(now: number) {
+  lastFrameAt = now;
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  game.update(dt);
-  if (pixi?.ready) pixi.render(game, cam, hover);
-  else if (ctx) renderGame(ctx, game, cam, hover);
-  syncHud();
-  syncDash();
-  if (game.message !== lastMsg) {
-    lastMsg = game.message;
-    syncMeta();
+  try {
+    // Self-heal the sim clock every frame: if a decision-hold (pending confirm
+    // / open ledger) was ever cleared without re-asserting the speed, this puts
+    // timeScale back to the player's chosen speed — so the sim can never get
+    // wedged at 0 and freeze the rig/trucks until a manual refresh.
+    applyTimeHold();
+    game.update(dt);
+    if (pixi?.ready) pixi.render(game, cam, hover);
+    else if (ctx) renderGame(ctx, game, cam, hover);
+    syncHud();
+    syncDash();
+    if (game.message !== lastMsg) {
+      lastMsg = game.message;
+      syncMeta();
+    }
+  } catch (err) {
+    // A single transient error must NOT kill the loop — that used to freeze the
+    // game (rig/trucks stop) until a manual refresh. Log it and keep animating.
+    console.error("[frame]", err);
   }
-  requestAnimationFrame(frame);
+  rafId = requestAnimationFrame(frame);
 }
+
+// Watchdog: if the loop ever stops ticking (a wedged frame, a throttled tab
+// that never resumed), restart it — no manual refresh needed. A live loop
+// refreshes lastFrameAt every frame, so this only fires on a real stall.
+window.setInterval(() => {
+  if (document.hidden) return; // RAF is legitimately paused when backgrounded
+  const now = performance.now();
+  if (now - lastFrameAt > 3000) {
+    console.warn("[watchdog] frame loop stalled — restarting");
+    cancelAnimationFrame(rafId); // kill any zombie so we keep a single chain
+    last = now;
+    lastFrameAt = now;
+    rafId = requestAnimationFrame(frame);
+  }
+}, 2000);
 
 const restored = loadGame();
 refreshProfileUI();
@@ -1731,7 +1791,7 @@ if (restored) {
     flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
   });
 }
-requestAnimationFrame(frame);
+rafId = requestAnimationFrame(frame);
 
 // Persist periodically and on tab hide / reload so progress survives refreshes.
 window.setInterval(saveGame, 4000);
