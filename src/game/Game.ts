@@ -173,6 +173,11 @@ export class Game {
   gasConnectedTiles = new Set<string>();
   /** Oil-pipe tiles wired to a battery network (keys "x,y"). Live = oil flowing. */
   oilConnectedTiles = new Set<string>();
+  /** Live oil-pipe tile "x,y" → BFS distance from its sink (battery for crude,
+   *  refinery for clean). Product flows toward DECREASING rank. Renderer reads this. */
+  oilFlowRank = new Map<string, number>();
+  /** Live gas-pipe tile "x,y" → distance from the nearest gas plant (its sink). */
+  gasFlowRank = new Map<string, number>();
   private pipeOilBucket = 0;
   /** Running total of bbl treated this calendar day (for SCADA). */
   private treatAccToday = 0;
@@ -332,7 +337,8 @@ export class Game {
       move_rig: "Send drill rig (rigs can cross open ground).",
       drill: "Wildcat under the rig — simple random IP.",
       road: "Lay lease road ($1.2k/tile). Trucks need roads. Bridges cross creeks.",
-      oil_pipe: "Oil pipe: drag battery → refinery for hands-free clean-oil sales.",
+      crude_pipe: "Crude pipe: drag wellhead tank → battery to gather raw crude.",
+      clean_pipe: "Clean pipe: drag battery → refinery for hands-free clean-oil sales.",
       gas_pipe: "Gas pipe: drag wells → gas refinery to sell gas at a premium.",
       gas_plant: "Place a 2×2 gas refinery — premium buyer for piped gas.",
       battery: "Place a 2×1 tank battery — more crude treating (crude→clean).",
@@ -700,12 +706,16 @@ export class Game {
     return true;
   }
 
-  /** Lay an oil or gas pipeline tile (auto-flow transport). */
-  layPipe(x: number, y: number, kind: "oil" | "gas"): boolean {
+  /** Lay a crude, clean, or gas pipeline tile (auto-flow transport). Crude and
+   *  clean share the single oil trench per tile but never link across phases. */
+  layPipe(x: number, y: number, kind: "crude" | "clean" | "gas"): boolean {
     const tile = this.tiles[y][x];
-    const flag = kind === "oil" ? "oilPipe" : "gasPipe";
+    const isOil = kind !== "gas";
+    const flag = isOil ? "oilPipe" : "gasPipe";
+    const label = kind === "gas" ? "Gas" : kind === "crude" ? "Crude" : "Clean";
     if (tile[flag]) {
-      this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe already here.`;
+      // One oil trench per tile (crude OR clean), one gas trench per tile.
+      this.message = isOil ? "Oil pipe already here." : "Gas pipe already here.";
       return false;
     }
     if (blocksBuild(tile.terrain)) {
@@ -717,10 +727,10 @@ export class Game {
       return false;
     }
     const bridge = isBridgeTerrain(tile.terrain);
-    const base = kind === "oil" ? OIL_PIPE_COST : GAS_PIPE_COST;
+    const base = isOil ? OIL_PIPE_COST : GAS_PIPE_COST;
     const cost = bridge ? base + BRIDGE_COST : base;
     if (this.player.cash < cost) {
-      this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe costs $${cost.toLocaleString()} here.`;
+      this.message = `${label} pipe costs $${cost.toLocaleString()} here.`;
       return false;
     }
     this.player.cash -= cost;
@@ -728,12 +738,13 @@ export class Game {
     this.ledger.push(
       this.market.day,
       "capex",
-      `${kind === "oil" ? "Oil" : "Gas"} pipe ${x},${y}`,
+      `${label} pipe ${x},${y}`,
       -cost,
     );
     tile[flag] = true;
+    if (isOil) tile.oilPhase = kind;
     this.pipesDirty = true;
-    this.message = `${kind === "oil" ? "Oil" : "Gas"} pipe laid at ${x},${y}.`;
+    this.message = `${label} pipe laid at ${x},${y}.`;
     return true;
   }
 
@@ -960,6 +971,7 @@ export class Game {
     if (tile.oilPipe) {
       const refund = refundOf(OIL_PIPE_COST);
       tile.oilPipe = false;
+      tile.oilPhase = undefined;
       this.player.cash += refund;
       this.ledger.push(this.market.day, "other", `Oil pipe salvage ${x},${y}`, refund);
       this.message = `Pulled oil pipe at ${x},${y}, +$${refund.toLocaleString()}.`;
@@ -1606,8 +1618,12 @@ export class Game {
       this.layRoad(x, y);
       return;
     }
-    if (this.tool === "oil_pipe") {
-      this.layPipe(x, y, "oil");
+    if (this.tool === "crude_pipe") {
+      this.layPipe(x, y, "crude");
+      return;
+    }
+    if (this.tool === "clean_pipe") {
+      this.layPipe(x, y, "clean");
       return;
     }
     if (this.tool === "gas_pipe") {
@@ -1747,7 +1763,7 @@ export class Game {
     const bits: string[] = [];
     if (tile.isPad) bits.push("company pad");
     if (tile.hasRoad) bits.push(isBridgeTerrain(tile.terrain) ? "bridge" : "road");
-    if (tile.oilPipe) bits.push("oil pipe");
+    if (tile.oilPipe) bits.push(tile.oilPhase === "crude" ? "crude pipe" : "clean pipe");
     if (tile.gasPipe) bits.push("gas pipe");
     if (!isOpen(tile.terrain) && !tile.hasRoad) bits.push(terrainLabel(tile.terrain));
     if (tile.surveyed) {
@@ -2340,10 +2356,13 @@ export class Game {
   }
 
   /**
-   * Flood the pipe networks once per tick:
-   *  - oil: for each battery, which refineries + wellhead tanks share its
-   *    oilPipe network (clean flows battery→ref, crude flows tank→battery).
-   *  - gas: which gasPipe tiles are reachable from a gas plant.
+   * Flood the pipe networks once per tick. Each network is BFS-seeded from its
+   * SINK and stores every live tile's distance-from-sink as a rank; product
+   * always flows toward DECREASING rank (crude→battery, clean→refinery,
+   * gas→plant). Crude and clean are separate lines that never link.
+   *  - crude: sink = battery, source = wellhead tank (fills crudeTankLinks).
+   *  - clean: sink = refinery, source = battery (fills oilBatteryLinks).
+   *  - gas:   sink = gas plant (multi-source), source = well.
    */
   private recomputePipes() {
     const key = (x: number, y: number) => `${x},${y}`;
@@ -2354,42 +2373,56 @@ export class Game {
     this.oilBatteryLinks.clear();
     this.crudeTankLinks.clear();
     this.oilConnectedTiles.clear();
+    this.oilFlowRank.clear();
+    this.gasConnectedTiles.clear();
+    this.gasFlowRank.clear();
+
     const batteries = this.buildings.filter((b) => b.kind === "battery");
     const refineries = this.buildings.filter((b) => b.kind === "refinery");
     const tanks = this.buildings.filter(
       (b) => b.kind === "wellhead_tank" && b.online,
     );
+    const plants = this.buildings.filter((b) => b.kind === "gas_plant");
 
-    // Collect pipe tiles once (not per battery); early-out when there are none.
-    const oilPipeTiles: { x: number; y: number }[] = [];
-    const gasPipeTiles: { x: number; y: number }[] = [];
+    // Bucket oil-pipe tiles by phase once (crude vs clean never mix), gas apart.
+    const crude: { x: number; y: number }[] = [];
+    const clean: { x: number; y: number }[] = [];
+    const gas: { x: number; y: number }[] = [];
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         const t = this.tiles[y][x];
-        if (t.oilPipe) oilPipeTiles.push({ x, y });
-        if (t.gasPipe) gasPipeTiles.push({ x, y });
+        if (t.oilPipe) (t.oilPhase === "crude" ? crude : clean).push({ x, y });
+        if (t.gasPipe) gas.push({ x, y });
       }
     }
 
-    if (oilPipeTiles.length && batteries.length) {
+    // Merge one sink-flood's ranks into the shared oil live-set + flow map,
+    // keeping the smallest rank when floods overlap (nearest sink wins).
+    const commitOil = (rank: Map<string, number>) => {
+      for (const [k, d] of rank) {
+        this.oilConnectedTiles.add(k);
+        const prev = this.oilFlowRank.get(k);
+        if (prev === undefined || d < prev) this.oilFlowRank.set(k, d);
+      }
+    };
+
+    // --- CRUDE: flood out from each battery (the sink) over crude tiles. ---
+    if (crude.length && batteries.length) {
       for (const battery of batteries) {
-        const seen = new Set<string>();
+        const rank = new Map<string, number>();
         const q: { x: number; y: number }[] = [];
-        for (const p of oilPipeTiles) {
+        for (const p of crude) {
           if (this.touchesFootprint(p.x, p.y, battery)) {
             const k = key(p.x, p.y);
-            if (!seen.has(k)) {
-              seen.add(k);
+            if (!rank.has(k)) {
+              rank.set(k, 0);
               q.push(p);
             }
           }
         }
-        const reachedRefs = new Set<string>();
         for (let head = 0; head < q.length; head++) {
           const c = q[head];
-          for (const r of refineries) {
-            if (this.touchesFootprint(c.x, c.y, r)) reachedRefs.add(r.id);
-          }
+          const d = rank.get(key(c.x, c.y))!;
           for (const t of tanks) {
             if (this.touchesFootprint(c.x, c.y, t)) {
               const links = this.crudeTankLinks.get(t.id) ?? [];
@@ -2401,45 +2434,89 @@ export class Game {
             const nx = c.x + dx;
             const ny = c.y + dy;
             if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+            const nt = this.tiles[ny][nx];
+            if (!nt.oilPipe || nt.oilPhase !== "crude") continue;
             const k = key(nx, ny);
-            if (seen.has(k) || !this.tiles[ny][nx].oilPipe) continue;
-            seen.add(k);
+            if (rank.has(k)) continue;
+            rank.set(k, d + 1);
             q.push({ x: nx, y: ny });
           }
         }
-        if (reachedRefs.size) {
-          this.oilBatteryLinks.set(battery.id, [...reachedRefs]);
-          this.oilConnected = true;
-        }
-        // Every pipe tile wired to a battery reads as a live oil line.
-        for (const k of seen) this.oilConnectedTiles.add(k);
+        commitOil(rank);
       }
     }
 
-    this.gasConnectedTiles.clear();
-    const plants = this.buildings.filter((b) => b.kind === "gas_plant");
-    if (gasPipeTiles.length && plants.length) {
+    // --- CLEAN: flood out from each refinery (the sink) over clean tiles. ---
+    if (clean.length && refineries.length) {
+      for (const ref of refineries) {
+        const rank = new Map<string, number>();
+        const q: { x: number; y: number }[] = [];
+        for (const p of clean) {
+          if (this.touchesFootprint(p.x, p.y, ref)) {
+            const k = key(p.x, p.y);
+            if (!rank.has(k)) {
+              rank.set(k, 0);
+              q.push(p);
+            }
+          }
+        }
+        for (let head = 0; head < q.length; head++) {
+          const c = q[head];
+          const d = rank.get(key(c.x, c.y))!;
+          for (const bat of batteries) {
+            if (this.touchesFootprint(c.x, c.y, bat)) {
+              const links = this.oilBatteryLinks.get(bat.id) ?? [];
+              if (!links.includes(ref.id)) links.push(ref.id);
+              this.oilBatteryLinks.set(bat.id, links);
+              this.oilConnected = true;
+            }
+          }
+          for (const [dx, dy] of DIRS4) {
+            const nx = c.x + dx;
+            const ny = c.y + dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+            const nt = this.tiles[ny][nx];
+            if (!nt.oilPipe || nt.oilPhase !== "clean") continue;
+            const k = key(nx, ny);
+            if (rank.has(k)) continue;
+            rank.set(k, d + 1);
+            q.push({ x: nx, y: ny });
+          }
+        }
+        commitOil(rank);
+      }
+    }
+
+    // --- GAS: flood out from the plants (the sink), one shared multi-source. ---
+    if (gas.length && plants.length) {
+      const rank = new Map<string, number>();
       const q: { x: number; y: number }[] = [];
-      for (const p of gasPipeTiles) {
+      for (const p of gas) {
         if (plants.some((pl) => this.touchesFootprint(p.x, p.y, pl))) {
           const k = key(p.x, p.y);
-          if (!this.gasConnectedTiles.has(k)) {
-            this.gasConnectedTiles.add(k);
+          if (!rank.has(k)) {
+            rank.set(k, 0);
             q.push(p);
           }
         }
       }
       for (let head = 0; head < q.length; head++) {
         const c = q[head];
+        const d = rank.get(key(c.x, c.y))!;
         for (const [dx, dy] of DIRS4) {
           const nx = c.x + dx;
           const ny = c.y + dy;
           if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          if (!this.tiles[ny][nx].gasPipe) continue;
           const k = key(nx, ny);
-          if (this.gasConnectedTiles.has(k) || !this.tiles[ny][nx].gasPipe) continue;
-          this.gasConnectedTiles.add(k);
+          if (rank.has(k)) continue;
+          rank.set(k, d + 1);
           q.push({ x: nx, y: ny });
         }
+      }
+      for (const [k, d] of rank) {
+        this.gasConnectedTiles.add(k);
+        this.gasFlowRank.set(k, d);
       }
     }
   }
@@ -3012,7 +3089,102 @@ export class Game {
       if (!u.cargoMode) u.cargoMode = "auto";
       if (!Number.isFinite(u.cargo)) u.cargo = 0;
     }
+    // Legacy saves carry oilPipe tiles with no phase — tag them so the new
+    // phase-aware BFS doesn't silently drop them off the network.
+    this.backfillOilPhases();
     this.pipesDirty = true;
+  }
+
+  /**
+   * Migrate pre-phase (legacy) oil-pipe tiles: every `oilPipe===true &&
+   * oilPhase===undefined` tile gets classified by its undirected component.
+   * Deterministic (pure function of the saved grid) so cloud reloads reproduce.
+   *  - component touches a wellhead tank but no refinery → crude;
+   *  - component touches a battery/refinery but no tank    → clean;
+   *  - component touches BOTH a tank and a refinery        → split at the
+   *    battery (tank-side crude, refinery-side clean); unsplittable → clean.
+   * New saves already carry oilPhase, so this is a no-op for them.
+   */
+  private backfillOilPhases(): void {
+    const cols = this.config.cols;
+    const rows = this.config.rows;
+    const key = (x: number, y: number) => `${x},${y}`;
+    const tanks = this.buildings.filter((b) => b.kind === "wellhead_tank");
+    const refineries = this.buildings.filter((b) => b.kind === "refinery");
+    const batteries = this.buildings.filter((b) => b.kind === "battery");
+    const visited = new Set<string>();
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const t = this.tiles[y][x];
+        if (!t.oilPipe || t.oilPhase !== undefined) continue;
+        const k0 = key(x, y);
+        if (visited.has(k0)) continue;
+        // BFS the undirected component of still-unphased oil-pipe tiles.
+        const comp: { x: number; y: number }[] = [];
+        const q = [{ x, y }];
+        visited.add(k0);
+        let touchesTank = false;
+        let touchesRef = false;
+        let touchesBattery = false;
+        for (let head = 0; head < q.length; head++) {
+          const c = q[head];
+          comp.push(c);
+          for (const b of tanks) if (this.touchesFootprint(c.x, c.y, b)) touchesTank = true;
+          for (const b of refineries) if (this.touchesFootprint(c.x, c.y, b)) touchesRef = true;
+          for (const b of batteries) if (this.touchesFootprint(c.x, c.y, b)) touchesBattery = true;
+          for (const [dx, dy] of DIRS4) {
+            const nx = c.x + dx;
+            const ny = c.y + dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+            const nt = this.tiles[ny][nx];
+            if (!nt.oilPipe || nt.oilPhase !== undefined) continue;
+            const nk = key(nx, ny);
+            if (visited.has(nk)) continue;
+            visited.add(nk);
+            q.push({ x: nx, y: ny });
+          }
+        }
+        if (touchesTank && touchesRef && touchesBattery) {
+          this.splitComponentAtBattery(comp, tanks, batteries);
+        } else if (touchesTank && !touchesRef) {
+          for (const c of comp) this.tiles[c.y][c.x].oilPhase = "crude";
+        } else {
+          // clean-only, ambiguous-unsplittable, or an orphan stub → clean.
+          for (const c of comp) this.tiles[c.y][c.x].oilPhase = "clean";
+        }
+      }
+    }
+  }
+
+  /** Legacy split: flood crude out from tank-touching tiles, stopping at the
+   *  battery (the crude sink); everything else in the run becomes clean. */
+  private splitComponentAtBattery(
+    comp: { x: number; y: number }[],
+    tanks: Building[],
+    batteries: Building[],
+  ): void {
+    const key = (x: number, y: number) => `${x},${y}`;
+    const inComp = new Set(comp.map((c) => key(c.x, c.y)));
+    const touchesTank = (c: { x: number; y: number }) =>
+      tanks.some((b) => this.touchesFootprint(c.x, c.y, b));
+    const touchesBattery = (c: { x: number; y: number }) =>
+      batteries.some((b) => this.touchesFootprint(c.x, c.y, b));
+    const crudeSet = new Set<string>();
+    const q = comp.filter(touchesTank);
+    for (const c of q) crudeSet.add(key(c.x, c.y));
+    for (let head = 0; head < q.length; head++) {
+      const c = q[head];
+      if (touchesBattery(c)) continue; // battery = crude sink; don't cross it
+      for (const [dx, dy] of DIRS4) {
+        const nk = key(c.x + dx, c.y + dy);
+        if (!inComp.has(nk) || crudeSet.has(nk)) continue;
+        crudeSet.add(nk);
+        q.push({ x: c.x + dx, y: c.y + dy });
+      }
+    }
+    for (const c of comp) {
+      this.tiles[c.y][c.x].oilPhase = crudeSet.has(key(c.x, c.y)) ? "crude" : "clean";
+    }
   }
 
   /** Shut-in grace remaining (sim-days) while a hard-mode terminal condition

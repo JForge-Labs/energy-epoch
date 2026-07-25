@@ -46,11 +46,13 @@ import type { Camera } from "./camera";
 import type { Game } from "./Game";
 import type { Tile, Well } from "./types";
 import { initAtlas, texFor } from "./gfx/atlas";
-import { pipeSnapsTo } from "./render";
+import { pipeSnapsTo, runIsOutward } from "./render";
 
 const P = {
-  oilPipe: 0xc07a2e,
-  oilPipeCore: 0xe8a24a,
+  crudePipe: 0x8a5a2e,
+  crudePipeCore: 0xd07a2e,
+  cleanPipe: 0x9a8f3a,
+  cleanPipeCore: 0xd8c060,
   gasPipe: 0x4aa892,
   gasPipeCore: 0x7fd0bb,
   pipeDead: 0x565049,
@@ -483,23 +485,38 @@ export class PixiRenderer {
     const g = this.gInfra;
     const cx = x * ts + ts / 2;
     const cy = y * ts + ts / 2;
+    const phase = kind === "oilPipe" ? tile.oilPhase : undefined;
     const live =
       kind === "oilPipe"
         ? game.oilConnectedTiles.has(`${x},${y}`)
         : game.gasConnectedTiles.has(`${x},${y}`);
-    const casing = live ? (kind === "oilPipe" ? P.oilPipe : P.gasPipe) : P.pipeDead;
-    const core = live
-      ? kind === "oilPipe"
-        ? P.oilPipeCore
-        : P.gasPipeCore
-      : P.pipeDeadCore;
+    const casing = !live
+      ? P.pipeDead
+      : kind === "gasPipe"
+        ? P.gasPipe
+        : phase === "crude"
+          ? P.crudePipe
+          : P.cleanPipe;
+    const core = !live
+      ? P.pipeDeadCore
+      : kind === "gasPipe"
+        ? P.gasPipeCore
+        : phase === "crude"
+          ? P.crudePipeCore
+          : P.cleanPipeCore;
+    const rankMap = kind === "oilPipe" ? game.oilFlowRank : game.gasFlowRank;
+    const rT = rankMap.get(`${x},${y}`) ?? 0;
     const outer = Math.max(2.5, ts * 0.15);
     const inner = Math.max(1.4, ts * 0.07);
 
     const dirs: [number, number][] = [];
     for (const [dx, dy] of N4) {
       const nb = game.tiles[y + dy]?.[x + dx];
-      if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind, snappedWells)) {
+      const pipeNeighbor =
+        kind === "oilPipe"
+          ? !!nb && !!nb.oilPipe && nb.oilPhase === tile.oilPhase
+          : !!nb && !!nb.gasPipe;
+      if (pipeNeighbor || pipeSnapsTo(game, x + dx, y + dy, kind, phase, snappedWells)) {
         dirs.push([dx, dy]);
       }
     }
@@ -514,9 +531,12 @@ export class PixiRenderer {
       g.moveTo(cx, cy).lineTo(ex, ey).stroke({ width: outer, color: casing, cap: "round" });
       g.moveTo(cx, cy).lineTo(ex, ey).stroke({ width: inner, color: core, cap: "round" });
       if (live) {
-        // Flow pulse: a bright slug sliding center→edge, phase-shifted per run.
-        const phase = (x * 3 + y * 5 + (dx + 1) + (dy + 1) * 2) * 0.13;
-        const f = (now * 0.0006 + phase) % 1;
+        // Flow pulse: a bright slug sliding along the run in its flow direction
+        // (outward = center→edge toward the sink; inward = edge→center).
+        const outward = runIsOutward(game, x, y, dx, dy, kind, phase, rankMap, rT);
+        const phaseOff = (x * 3 + y * 5 + (dx + 1) + (dy + 1) * 2) * 0.13;
+        const t = (now * 0.0006 + phaseOff) % 1;
+        const f = outward ? t : 1 - t;
         g.circle(cx + dx * (ts / 2) * f, cy + dy * (ts / 2) * f, inner * 0.9).fill({
           color: 0xffffff,
           alpha: 0.45,

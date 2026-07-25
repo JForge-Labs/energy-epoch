@@ -28,8 +28,11 @@ export interface Tile {
   isPad: boolean;
   /** Player-built road */
   hasRoad: boolean;
-  /** Player-built oil pipeline (battery → refinery auto-flow) */
+  /** Player-built oil pipeline tile. Phase decides what it carries + who it links. */
   oilPipe?: boolean;
+  /** Which oil line this tile is: crude (tank→battery) or clean (battery→refinery).
+   *  Only meaningful when oilPipe===true. Same-phase tiles link; cross-phase do NOT. */
+  oilPhase?: "crude" | "clean";
   /** Player-built gas pipeline (well → gas plant) */
   gasPipe?: boolean;
 }
@@ -163,7 +166,8 @@ export type BuildTool =
   | "move_rig"
   | "drill"
   | "road"
-  | "oil_pipe"
+  | "crude_pipe"
+  | "clean_pipe"
   | "gas_pipe"
   | "gas_plant"
   | "battery"

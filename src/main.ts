@@ -167,7 +167,8 @@ app.innerHTML = `
       </div>
       <div class="tool-group" data-tab="build" hidden>
         <button class="tool-btn" data-tool="road" type="button">Road</button>
-        <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="crude_pipe" type="button">Crude pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="clean_pipe" type="button">Clean pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
         <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
         <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
         <button class="tool-btn" data-tool="gas_plant" type="button">Gas Refinery · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
@@ -559,17 +560,18 @@ function disarmToSelect() {
 // Dock morphs in place to show the held tool + a big "✕ Done" so dropping it is
 // one obvious tap — the fix for "releasing a latched tool is unintuitive".
 const LATCHED = new Set<BuildTool>([
-  "road", "oil_pipe", "gas_pipe", "sell", "choke", "move_rig", "drill", "explore",
+  "road", "crude_pipe", "clean_pipe", "gas_pipe", "sell", "choke", "move_rig", "drill", "explore",
 ]);
 const TOOL_LABEL: Record<string, string> = {
   select: "Select", drill: "Drill", choke: "Shut in", move_rig: "Move rig",
   explore: "Explore", add_tank: "Tank", gas_line: "Incinerator", road: "Road",
-  oil_pipe: "Oil pipe", gas_pipe: "Gas pipe", battery: "Battery",
+  crude_pipe: "Crude pipe", clean_pipe: "Clean pipe", gas_pipe: "Gas pipe", battery: "Battery",
   gas_plant: "Gas Refinery", refinery: "Refinery", sell: "Sell",
 };
 const TOOL_HINT: Record<string, string> = {
   select: "tap a tile to inspect", drill: "tap tiles to queue wells",
-  road: "drag to lay road", oil_pipe: "drag to lay oil pipe",
+  road: "drag to lay road", crude_pipe: "drag tank → battery (crude)",
+  clean_pipe: "drag battery → refinery (clean)",
   gas_pipe: "drag to lay gas pipe", sell: "drag over tiles to sell",
   choke: "tap a well to shut it in", move_rig: "tap to move the rig",
   explore: "tap to survey a 3×3", add_tank: "tap a pad to add a tank",
@@ -1498,7 +1500,8 @@ function handleTileClick(tile: { x: number; y: number }) {
 
   if (
     tool === "road" ||
-    tool === "oil_pipe" ||
+    tool === "crude_pipe" ||
+    tool === "clean_pipe" ||
     tool === "gas_pipe" ||
     tool === "sell" ||
     tool === "choke" ||
@@ -1515,7 +1518,8 @@ function handleTileClick(tile: { x: number; y: number }) {
 function isPaintTool(tool: BuildTool): boolean {
   return (
     tool === "road" ||
-    tool === "oil_pipe" ||
+    tool === "crude_pipe" ||
+    tool === "clean_pipe" ||
     tool === "gas_pipe" ||
     tool === "sell"
   );
@@ -1529,12 +1533,18 @@ function applyToolTile(x: number, y: number): boolean {
       return false;
     }
     game.layRoad(x, y);
-  } else if (game.tool === "oil_pipe") {
+  } else if (game.tool === "crude_pipe") {
     if (game.player.cash < OIL_PIPE_COST) {
-      flash(`Out of cash for oil pipe at ${x},${y}.`);
+      flash(`Out of cash for crude pipe at ${x},${y}.`);
       return false;
     }
-    game.layPipe(x, y, "oil");
+    game.layPipe(x, y, "crude");
+  } else if (game.tool === "clean_pipe") {
+    if (game.player.cash < OIL_PIPE_COST) {
+      flash(`Out of cash for clean pipe at ${x},${y}.`);
+      return false;
+    }
+    game.layPipe(x, y, "clean");
   } else if (game.tool === "gas_pipe") {
     if (game.player.cash < GAS_PIPE_COST) {
       flash(`Out of cash for gas pipe at ${x},${y}.`);
@@ -1903,7 +1913,10 @@ function openContextMenu(
   const onStructure = well || (b && b.kind !== "gas_flare");
   if (!onStructure) {
     if (!tt.hasRoad) items.push({ label: `Road (${k(ROAD_COST)})`, act: () => game.layRoad(tile.x, tile.y) });
-    if (!tt.oilPipe) items.push({ label: `Oil pipe (${k(OIL_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "oil") });
+    if (!tt.oilPipe) {
+      items.push({ label: `Crude pipe (${k(OIL_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "crude") });
+      items.push({ label: `Clean pipe (${k(OIL_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "clean") });
+    }
     if (!tt.gasPipe) items.push({ label: `Gas pipe (${k(GAS_PIPE_COST)})`, act: () => game.layPipe(tile.x, tile.y, "gas") });
   }
   if (tt.hasRoad || tt.oilPipe || tt.gasPipe || (b && b.kind !== "gas_flare")) {

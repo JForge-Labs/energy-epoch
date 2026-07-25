@@ -16,8 +16,10 @@ const C = {
   rockAlt: "#4a453d",
   rockPeak: "#5c5648",
   rockShadow: "#2c2924",
-  oilPipe: "#c07a2e",
-  oilPipeCore: "#e8a24a",
+  crudePipe: "#8a5a2e",
+  crudePipeCore: "#d07a2e",
+  cleanPipe: "#9a8f3a",
+  cleanPipeCore: "#d8c060",
   gasPipe: "#4aa892",
   gasPipeCore: "#7fd0bb",
   pipeDead: "#565049",
@@ -117,24 +119,27 @@ function drawTerrainDecor(
   }
 }
 
-/** Does a pipe of `kind` connect to whatever asset sits on tile (nx,ny)?
+/** Does a pipe of `kind` (+ `phase` for oil) connect to whatever asset sits on
+ *  tile (nx,ny)? Phase-scoped so a crude line only snaps to tanks (its source)
+ *  and batteries (its sink), and a clean line only to batteries + refineries —
+ *  a clean run past a wellhead tank no longer sprouts a bogus stub into it.
  *  Shared with the Pixi renderer so both draw identical snap runs. */
 export function pipeSnapsTo(
   game: Game,
   nx: number,
   ny: number,
   kind: "oilPipe" | "gasPipe",
+  phase?: "crude" | "clean",
   snappedWells?: Set<string>,
 ): boolean {
   const nb = game.tiles[ny]?.[nx];
   if (!nb) return false;
   const b = game.buildingAt(nx, ny);
   if (kind === "oilPipe") {
-    return (
-      b?.kind === "battery" ||
-      b?.kind === "refinery" ||
-      b?.kind === "wellhead_tank"
-    );
+    if (b?.kind === "wellhead_tank") return phase === "crude"; // crude source only
+    if (b?.kind === "battery") return true; // crude sink OR clean source
+    if (b?.kind === "refinery") return phase === "clean"; // clean sink only
+    return false;
   }
   // Gas pipes tie a wellhead (the gas source) into a plant / gas line.
   if (b?.kind === "gas_plant" || b?.kind === "gas_line") return true;
@@ -147,6 +152,36 @@ export function pipeSnapsTo(
     snappedWells.add(key);
   }
   return true;
+}
+
+/**
+ * Does product on tile (x,y) leave OUTWARD along the run toward (x+dx,y+dy)?
+ * Flow always heads toward decreasing sink-distance rank. A neighbor with a
+ * lower rank is nearer the sink → product exits there; a building neighbor is
+ * outward only when it's this line's SINK (battery for crude, refinery for
+ * clean, plant for gas). Shared by both renderers so animation matches flow.
+ */
+export function runIsOutward(
+  game: Game,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  kind: "oilPipe" | "gasPipe",
+  phase: "crude" | "clean" | undefined,
+  rankMap: Map<string, number>,
+  rT: number,
+): boolean {
+  const nr = rankMap.get(`${x + dx},${y + dy}`);
+  if (nr !== undefined) return nr < rT;
+  const b = game.buildingAt(x + dx, y + dy);
+  const isSink =
+    kind === "gasPipe"
+      ? b?.kind === "gas_plant"
+      : phase === "crude"
+        ? b?.kind === "battery"
+        : b?.kind === "refinery";
+  return !!isSink;
 }
 
 /**
@@ -172,16 +207,27 @@ function drawPipeTile(
   if (!tile[kind]) return;
   const cx = px + size / 2;
   const cy = py + size / 2;
+  const phase = kind === "oilPipe" ? tile.oilPhase : undefined;
   const live =
     kind === "oilPipe"
       ? game.oilConnectedTiles.has(`${x},${y}`)
       : game.gasConnectedTiles.has(`${x},${y}`);
-  const casing = live ? (kind === "oilPipe" ? C.oilPipe : C.gasPipe) : C.pipeDead;
-  const core = live
-    ? kind === "oilPipe"
-      ? C.oilPipeCore
-      : C.gasPipeCore
-    : C.pipeDeadCore;
+  const casing = !live
+    ? C.pipeDead
+    : kind === "gasPipe"
+      ? C.gasPipe
+      : phase === "crude"
+        ? C.crudePipe
+        : C.cleanPipe;
+  const core = !live
+    ? C.pipeDeadCore
+    : kind === "gasPipe"
+      ? C.gasPipeCore
+      : phase === "crude"
+        ? C.crudePipeCore
+        : C.cleanPipeCore;
+  const rankMap = kind === "oilPipe" ? game.oilFlowRank : game.gasFlowRank;
+  const rT = rankMap.get(`${x},${y}`) ?? 0;
   // Slimmer than before — cleans up the map when lines run everywhere.
   const outer = Math.max(2.5, size * 0.15);
   const inner = Math.max(1.4, size * 0.07);
@@ -191,11 +237,16 @@ function drawPipeTile(
     [0, 1],
     [0, -1],
   ];
-  // Directions that carry a run: a pipe neighbor, or an asset to snap into.
+  // Directions that carry a run: a same-phase pipe neighbor, or an asset this
+  // line's phase is allowed to snap into.
   const dirs: [number, number][] = [];
   for (const [dx, dy] of neighbors) {
     const nb = tiles[y + dy]?.[x + dx];
-    if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind, snappedWells)) {
+    const pipeNeighbor =
+      kind === "oilPipe"
+        ? !!nb && !!nb.oilPipe && nb.oilPhase === tile.oilPhase
+        : !!nb && !!nb.gasPipe;
+    if (pipeNeighbor || pipeSnapsTo(game, x + dx, y + dy, kind, phase, snappedWells)) {
       dirs.push([dx, dy]);
     }
   }
@@ -224,17 +275,29 @@ function drawPipeTile(
   runs(outer, casing);
 
   // Core: on a live line, marching dashes read as product flowing to the sink.
+  // Each run animates in its OWN direction (some inward, some outward) so the
+  // dashes converge on the sink and match the actual flow math.
   if (live && dirs.length) {
     const dash = Math.max(3, size * 0.2);
+    const march = (time * 0.05) % (dash * 2);
     ctx.lineCap = "butt";
     ctx.setLineDash([dash, dash]);
-    ctx.lineDashOffset = -((time * 0.05) % (dash * 2));
+    ctx.strokeStyle = core;
+    ctx.lineWidth = inner;
+    for (const [dx, dy] of dirs) {
+      const outward = runIsOutward(game, x, y, dx, dy, kind, phase, rankMap, rT);
+      ctx.lineDashOffset = outward ? -march : march;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + (dx * size) / 2, cy + (dy * size) / 2);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   } else {
     ctx.lineCap = "round";
     ctx.setLineDash([]);
+    runs(inner, core);
   }
-  runs(inner, core);
-  ctx.setLineDash([]);
 }
 
 function prospectOverlay(tile: Tile): string | null {

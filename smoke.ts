@@ -9,6 +9,7 @@ import {
 } from "./src/game/data/economy";
 import { simulateProduction } from "./src/game/systems/production";
 import { blocksBuild, isOpen, rigCanEnter } from "./src/game/systems/terrain";
+import { pipeSnapsTo, runIsOutward } from "./src/game/render";
 import {
   starterBatteryFrom,
   starterFieldFrom,
@@ -139,7 +140,7 @@ g.player.cash = 5_000_000;
 let laid = 0;
 for (const p of staircase({ x: battery.x, y: battery.y }, { x: refinery.x, y: refinery.y })) {
   if (g.buildingAt(p.x, p.y)) continue;
-  if (g.layPipe(p.x, p.y, "oil")) laid++;
+  if (g.layPipe(p.x, p.y, "clean")) laid++;
 }
 check("oil pipe tiles laid", laid > 5);
 g.update(0.2); // triggers recomputePipes
@@ -221,8 +222,8 @@ console.log("add-tank + crude pipe");
   check("add tank caps at 1600", tank.oilCap === 1600);
   check("add tank refuses past max", !g.addTank(tx, ty));
 
-  // Link tank → battery with an oil pipe tile between them (below the footprint).
-  g.layPipe(bat.x, bat.y + 2, "oil");
+  // Link tank → battery with a crude pipe tile between them (below the footprint).
+  g.layPipe(bat.x, bat.y + 2, "crude");
   // Fill clean so treat cannot consume the piped crude in the same tick.
   bat.clean = bat.cleanCap;
   const oilBefore = tank.oil;
@@ -249,7 +250,7 @@ console.log("add-tank + crude pipe");
     hp: 100,
   };
   g.buildings.push(tank2);
-  g.layPipe(bat.x + 1, bat.y + 2, "oil");
+  g.layPipe(bat.x + 1, bat.y + 2, "crude");
   tank.oil = 500;
   const drainBefore = tank.oil + tank2.oil;
   g.update(0.2);
@@ -392,7 +393,7 @@ console.log("oil pipe sells clean without truck camping");
   let laidP = 0;
   for (const p of staircase({ x: bat.x, y: bat.y }, { x: ref.x, y: ref.y })) {
     if (gP.buildingAt(p.x, p.y)) continue;
-    if (gP.layPipe(p.x, p.y, "oil")) laidP++;
+    if (gP.layPipe(p.x, p.y, "clean")) laidP++;
   }
   check("oil pipe sell-test laid tiles", laidP > 5);
   gP.update(0.2);
@@ -765,6 +766,119 @@ console.log("difficulty modes: easy never shuts in; hard has grace + bankruptcy"
   gb.player.cash = -100_000;
   for (let i = 0; i < 600 && !gb.gameOver; i++) gb.update(0.2);
   check("hard: insolvency shuts in after grace", gb.gameOver === true && /nsolven|loan|bank/i.test(gb.gameOverReason));
+}
+
+console.log("pipe rework: crude/clean separation + flow direction + backfill");
+{
+  // Build a controlled arena on cleared ground:
+  //   T(8,10) —crude 9,10 10,10 11,10— B(12,10 2x2) —clean 14,10 15,10— R(16,10 2x2)
+  // plus a crude stub next to the refinery and a clean stub next to the tank.
+  const gp = new Game();
+  gp.player.cash = 50_000_000;
+  const ax0 = 6, ay0 = 8, ax1 = 20, ay1 = 13;
+  const hits = (b: Building) => {
+    const bw = b.w ?? 1, bh = b.h ?? 1;
+    return b.x <= ax1 && b.x + bw - 1 >= ax0 && b.y <= ay1 && b.y + bh - 1 >= ay0;
+  };
+  gp.buildings = gp.buildings.filter((b) => !hits(b));
+  gp.wells = gp.wells.filter((w) => !(w.x >= ax0 && w.x <= ax1 && w.y >= ay0 && w.y <= ay1));
+  for (let y = ay0; y <= ay1; y++)
+    for (let x = ax0; x <= ax1; x++) {
+      const t = gp.tiles[y][x];
+      t.terrain = "ground";
+      t.hasRoad = false;
+      t.oilPipe = false;
+      t.oilPhase = undefined;
+      t.gasPipe = false;
+    }
+  const tank: Building = {
+    id: "pr_tank", kind: "wellhead_tank", x: 8, y: 10,
+    oil: 300, oilCap: 400, crude: 0, crudeCap: 0, clean: 0, cleanCap: 0,
+    wellId: null, online: true, hp: 100,
+  };
+  const bat: Building = {
+    id: "pr_bat", kind: "battery", x: 12, y: 10,
+    oil: 0, oilCap: 0, crude: 0, crudeCap: 2000, clean: 0, cleanCap: 1000,
+    wellId: null, online: true, hp: 100, w: 2, h: 2,
+  };
+  const ref: Building = {
+    id: "pr_ref", kind: "refinery", x: 16, y: 10,
+    oil: 0, oilCap: 0, crude: 0, crudeCap: 0, clean: 0, cleanCap: 0,
+    wellId: null, online: true, hp: 100, w: 2, h: 2,
+    throughputCap: 2400, throughputUsed: 0,
+  };
+  gp.buildings.push(tank, bat, ref);
+
+  // Real lay path (exercises layPipe cost/terrain/phase).
+  check("crude line lays", gp.layPipe(9, 10, "crude") && gp.layPipe(10, 10, "crude") && gp.layPipe(11, 10, "crude"));
+  check("clean line lays", gp.layPipe(14, 10, "clean") && gp.layPipe(15, 10, "clean"));
+  // Stubs of the WRONG phase touching an endpoint they must not serve.
+  check("crude stub by refinery lays", gp.layPipe(15, 11, "crude"));
+  check("clean stub by tank lays", gp.layPipe(8, 11, "clean"));
+  gp.update(0.2); // recompute
+
+  // 1) Separation — wrong-phase stubs never register / go live.
+  check("crude stub next to refinery is dead", !gp.oilConnectedTiles.has("15,11"));
+  check("clean stub next to tank is dead", !gp.oilConnectedTiles.has("8,11"));
+  check("adjacent crude+clean don't merge", gp.oilConnectedTiles.has("15,10") && !gp.oilConnectedTiles.has("15,11"));
+
+  // 4) Wellhead de-snap — clean never snaps to a tank; crude never to a refinery.
+  check("clean does NOT snap to wellhead tank", pipeSnapsTo(gp, 8, 10, "oilPipe", "clean") === false);
+  check("crude DOES snap to wellhead tank", pipeSnapsTo(gp, 8, 10, "oilPipe", "crude") === true);
+  check("crude does NOT snap to refinery", pipeSnapsTo(gp, 16, 10, "oilPipe", "crude") === false);
+  check("clean DOES snap to refinery", pipeSnapsTo(gp, 16, 10, "oilPipe", "clean") === true);
+
+  // 2) Crude path — live, rank decreases toward the battery (sink), flow moves.
+  check("crude tiles live", gp.oilConnectedTiles.has("9,10") && gp.oilConnectedTiles.has("11,10"));
+  check("crude rank 0 at battery-adjacent tile", gp.oilFlowRank.get("11,10") === 0);
+  check("crude rank increases away from battery", gp.oilFlowRank.get("9,10")! > gp.oilFlowRank.get("11,10")!);
+  bat.clean = bat.cleanCap; // block treating so piped crude stays as crude
+  const tankOil0 = tank.oil, batCrude0 = bat.crude;
+  gp.update(0.2);
+  check("crude pipe drains tank", tank.oil < tankOil0);
+  check("crude pipe fills battery crude", bat.crude > batCrude0);
+
+  // 3) Clean path — connected, rank decreases toward the refinery (sink), sells.
+  check("battery↔refinery clean-connected", gp.oilConnected === true);
+  check("clean rank 0 at refinery-adjacent tile", gp.oilFlowRank.get("15,10") === 0);
+  check("clean rank increases away from refinery", gp.oilFlowRank.get("14,10")! > gp.oilFlowRank.get("15,10")!);
+  const sold0 = gp.totalOilSold;
+  bat.clean = bat.cleanCap;
+  gp.update(0.2);
+  check("clean pipe sells to refinery", gp.totalOilSold > sold0);
+
+  // 5) Direction — a straight crude tile flows OUTWARD toward the battery only.
+  const rMid = gp.oilFlowRank.get("10,10")!;
+  check("run toward battery is outward", runIsOutward(gp, 10, 10, 1, 0, "oilPipe", "crude", gp.oilFlowRank, rMid) === true);
+  check("run toward tank is inward", runIsOutward(gp, 10, 10, -1, 0, "oilPipe", "crude", gp.oilFlowRank, rMid) === false);
+
+  // 6a) Save round-trip preserves oilPhase + reproduces identical flow ranks.
+  const rt = JSON.parse(JSON.stringify(gp.serialize()));
+  const gr = new Game();
+  gr.applyState(rt);
+  check("round-trip keeps crude phase", gr.tiles[10][10].oilPhase === "crude");
+  check("round-trip keeps clean phase", gr.tiles[10][14].oilPhase === "clean");
+  gr.update(0.2);
+  check("round-trip reproduces crude rank", gr.oilFlowRank.get("9,10") === gp.oilFlowRank.get("9,10"));
+  check("round-trip reproduces clean rank", gr.oilFlowRank.get("15,10") === 0);
+
+  // 6b) Legacy backfill — a no-phase save re-tags components correctly.
+  const legacy = JSON.parse(JSON.stringify(gp.serialize()));
+  for (const row of legacy.tiles) for (const t of row) if (t.oilPipe) delete t.oilPhase;
+  const gl = new Game();
+  gl.applyState(legacy); // applyState → backfillOilPhases()
+  check("backfill tags tank-touching run crude", gl.tiles[10][10].oilPhase === "crude");
+  check("backfill tags refinery-only run clean", gl.tiles[10][14].oilPhase === "clean" && gl.tiles[10][15].oilPhase === "clean");
+  gl.update(0.2);
+  check("backfilled crude path drains a tank", (() => {
+    const t = gl.buildings.find((b) => b.id === "pr_tank")!;
+    const b = gl.buildings.find((bb) => bb.id === "pr_bat")!;
+    b.clean = b.cleanCap;
+    const o0 = t.oil;
+    for (let i = 0; i < 5; i++) gl.update(0.2);
+    return t.oil < o0;
+  })());
+  check("backfilled clean path is connected", gl.oilConnected === true);
 }
 
 console.log("save round-trip");
