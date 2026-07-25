@@ -737,13 +737,16 @@ function saveUi() {
   }
 }
 const uiState = loadUi();
-// Mobile: start with Fleet collapsed so Stop/Start isn't fat-fingered over the map.
+// Mobile: start the overlay panels collapsed to chips so the map isn't buried
+// under them (one tap on a title opens it). Triage stays visible — it's the
+// guide. Only defaults when the user hasn't chosen, so it respects prior taps.
 if (
-  uiState.fleet === undefined &&
   typeof window !== "undefined" &&
-  window.matchMedia?.("(max-width: 700px)").matches
+  window.matchMedia?.("(max-width: 720px)").matches
 ) {
-  uiState.fleet = true;
+  for (const k of ["inspect", "dash", "ledger", "fleet"] as (keyof UiState)[]) {
+    if (uiState[k] === undefined) uiState[k] = true;
+  }
 }
 const PANELS: { sel: string; key: keyof UiState }[] = [
   { sel: "#inspect-panel", key: "inspect" },

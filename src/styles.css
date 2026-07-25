@@ -910,14 +910,83 @@ body {
 }
 
 @media (max-width: 720px) {
+  /* Canvas-first: keep the chrome tight in BOTH orientations so the map owns
+     the screen instead of being crushed between a tall HUD and a wrapped
+     toolbar. Top HUD stays a compact 1–2 rows (not a tall column). */
   .top-bar {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.55rem;
+    padding: max(0.4rem, env(safe-area-inset-top)) 0.55rem 0.4rem 0.55rem;
+  }
+  .brand {
+    font-size: 1.05rem;
+  }
+  .brand span {
+    display: none; /* drop the "// facility" subtitle to save a line */
+  }
+  .hud-stats {
+    gap: 0.5rem;
+    font-size: 0.7rem;
+  }
+  .hud-actions {
+    gap: 0.25rem;
   }
 
+  /* The big one: the toolbar becomes ONE horizontally-swipeable row instead of
+     wrapping into 6+ rows — reclaims most of the vertical space on a phone. */
+  .bottom-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    gap: 0.3rem;
+    padding: 0.3rem 0.5rem;
+    scrollbar-width: none; /* Firefox — hide the scrollbar, it's swipe-scrolled */
+  }
+  .bottom-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .tool-group {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    border-left: none; /* no dividers in a scroll row */
+    padding-left: 0;
+  }
+  .tool-group-label {
+    display: none; /* the "Actions"/"Facilities" labels — cost width, low value */
+  }
   .tool-meta {
-    margin-left: 0;
-    text-align: left;
-    width: 100%;
+    display: none; /* status line — the triage panel + toasts carry this on mobile */
+  }
+
+  /* Overlay panels start collapsed on mobile (main.ts); when opened they're
+     narrower and height-capped so they never fully bury the map. */
+  .inspect-panel,
+  .triage-panel,
+  .fleet-panel,
+  .dash-panel,
+  .ledger-panel {
+    width: min(250px, 82vw);
+    font-size: 0.68rem;
+    max-height: 46vh;
+    overflow: auto;
+  }
+}
+
+/* Landscape phones have very little height — squeeze the bars further so the
+   map still gets the middle. */
+@media (max-height: 500px) and (max-width: 920px) {
+  .top-bar {
+    padding-top: max(0.3rem, env(safe-area-inset-top));
+    padding-bottom: 0.3rem;
+    gap: 0.25rem 0.5rem;
+  }
+  .bottom-bar {
+    padding-top: 0.25rem;
+    padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+  }
+  .tool-btn {
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
   }
 }
