@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signing in — Energy Epoch</title>
+<link rel="icon" href="/favicon.svg" />
+</head>
+<body style="font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:radial-gradient(900px 500px at 60% -10%,#1c2413 0%,#0d1109 60%);color:#e8ece6;display:grid;place-items:center;height:100vh;margin:0">
+  <div style="text-align:center;max-width:360px;padding:1.5rem">
+    <h2 style="color:#d4a017;letter-spacing:.06em;margin:0 0 .8rem">ENERGY EPOCH</h2>
+    <p id="msg" style="color:#9aa392;min-height:1.4em">Signing you in…</p>
+    <button id="go" style="display:none;font:inherit;font-weight:700;padding:.7rem 1.4rem;background:#d4a017;border:none;color:#1a1610;border-radius:10px;cursor:pointer">Confirm sign-in</button>
+  </div>
+  <script>
+    var msg = document.getElementById("msg"), go = document.getElementById("go");
+    // Token is sanitised to the hex alphabet the server minted.
+    var token = (new URLSearchParams(location.search).get("token") || "").replace(/[^a-f0-9]/g, "");
+    function consume() {
+      msg.textContent = "Signing you in…";
+      go.style.display = "none";
+      // fetch() (not a form submit) so this is NOT a navigation request — a
+      // navigation POST is intercepted by Cloudflare Assets (405) before the
+      // Worker runs. Same-origin credentials so the session cookie is stored.
+      fetch("/api/auth/consume", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "token=" + token,
+        credentials: "same-origin",
+      })
+        .then(function (r) {
+          if (!r.ok) return r.text().then(function (t) { throw new Error(t || "Sign-in failed"); });
+          return r.json();
+        })
+        .then(function () {
+          msg.textContent = "Signed in! Loading the game…";
+          location.replace("/?signedin=1");
+        })
+        .catch(function (e) {
+          msg.textContent = (e && e.message ? e.message : "Sign-in failed") + " ";
+          go.textContent = "Try again";
+          go.style.display = "inline-block";
+        });
+    }
+    go.onclick = consume;
+    if (token) consume();
+    else msg.textContent = "Missing sign-in token — request a new link.";
+  </script>
+</body>
+</html>

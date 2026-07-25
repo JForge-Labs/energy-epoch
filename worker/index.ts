@@ -111,21 +111,6 @@ async function sendMagicLink(env: Env, email: string, link: string): Promise<voi
   });
 }
 
-function confirmPage(token: string): Response {
-  // GET landing — a button that POSTs the token, so email link-prefetch can't
-  // silently consume the single-use token.
-  const safe = token.replace(/[^a-f0-9]/g, "");
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in — Energy Epoch</title>
-<body style="font-family:system-ui;background:#11150f;color:#e8ece6;display:grid;place-items:center;height:100vh;margin:0">
-<form method="POST" action="/api/auth/consume" style="text-align:center">
-  <h2 style="color:#d4a017">Energy Epoch</h2>
-  <input type="hidden" name="token" value="${safe}">
-  <button type="submit" style="font-size:1rem;padding:.7rem 1.4rem;background:#d4a017;border:none;color:#1a1610;cursor:pointer">Confirm sign-in</button>
-</form></body>`;
-  return new Response(html, { headers: { "content-type": "text/html" } });
-}
-
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -173,18 +158,17 @@ export default {
           )
             .bind(hash, email, now + TOKEN_TTL_MS, now)
             .run();
-          const link = `${env.APP_URL}/api/auth/verify?token=${token}`;
+          // Link points at the STATIC /confirm page (Cloudflare Assets serves
+          // that for the navigation click); that page fetch()es /api/auth/consume
+          // — a non-navigation POST that actually reaches this Worker (a form
+          // submit would be a navigation POST → Assets 405s it).
+          const link = `${env.APP_URL}/confirm?token=${token}`;
           await sendMagicLink(env, email, link).catch(() => {});
         }
         return json({ ok: true });
       }
 
-      // --- GET /api/auth/verify?token= -> confirm page (prefetch-safe) ---
-      if (url.pathname === "/api/auth/verify" && req.method === "GET") {
-        return confirmPage(url.searchParams.get("token") ?? "");
-      }
-
-      // --- POST /api/auth/consume { token } -> session cookie + redirect ---
+      // --- POST /api/auth/consume { token } -> session cookie (JSON) ---
       if (url.pathname === "/api/auth/consume" && req.method === "POST") {
         const form = await req.formData().catch(() => null);
         const token = String(form?.get("token") ?? "");
@@ -223,10 +207,9 @@ export default {
         )
           .bind(await sha256hex(sid), user.id, now + SESSION_TTL_MS, now)
           .run();
-        return new Response(null, {
-          status: 302,
-          headers: { location: env.APP_URL + "/?signedin=1", "set-cookie": cookieHeader(sid) },
-        });
+        // JSON (not a 302) — the caller is a fetch() from /confirm; the browser
+        // still applies Set-Cookie, then the page redirects into the game.
+        return json({ ok: true }, 200, { "set-cookie": cookieHeader(sid) });
       }
 
       // --- GET /api/me ---
