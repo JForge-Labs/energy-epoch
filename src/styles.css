@@ -327,6 +327,14 @@ body {
 .triage-panel .triage-title {
   cursor: pointer;
 }
+/* Expanded state shows a ▾ collapse affordance (collapsed shows ▸ below). */
+.triage-panel:not(.panel-collapsed) .triage-title::after {
+  content: "▾";
+  margin-left: auto;
+  padding-left: 0.4rem;
+  color: var(--steel-dim);
+  font-size: 0.7rem;
+}
 .triage-panel.panel-collapsed {
   min-width: 0;
   padding: 0.4rem 0.55rem;
@@ -634,17 +642,6 @@ body {
   border-color: var(--steel);
 }
 
-/* Help text lives in the toolbar as its own full-width row so it can never
-   overlap the tool buttons when they wrap. */
-.help-chip {
-  flex-basis: 100%;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  padding: 0 0.15rem 0.15rem;
-  opacity: 0.85;
-}
-
 .guide-bar {
   position: absolute;
   left: 0.75rem;
@@ -657,6 +654,127 @@ body {
   color: var(--amber-hot);
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+/* Objectives onboarding card (replaces the money-loop banner). */
+.objectives {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(320px, 82vw);
+  padding: 0.5rem 0.7rem;
+  background: rgba(18, 24, 20, 0.95);
+  border: 1px solid var(--amber);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 0.72rem;
+}
+.objectives[hidden] {
+  display: none;
+}
+.obj-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.obj-title {
+  color: var(--amber-hot);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+.obj-x,
+.hint-x {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+}
+.obj-x:hover,
+.hint-x:hover {
+  color: var(--amber-hot);
+}
+.obj-list {
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+}
+.obj-step {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-dim);
+}
+.obj-check {
+  flex: 0 0 auto;
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 1px solid var(--steel-dim);
+  border-radius: 50%;
+  position: relative;
+}
+.obj-step.done {
+  color: var(--text);
+}
+.obj-step.done .obj-check {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.obj-step.done .obj-check::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.68rem;
+  color: #0b120c;
+}
+.objectives.obj-complete {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 2px var(--ok), 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Top-bar secondary-metrics fold (Debt / Int / Oil / Wx). */
+.metrics-more {
+  display: contents;
+}
+.metrics-more[data-open="false"] {
+  display: none;
+}
+.metrics-toggle {
+  appearance: none;
+  border: 1px solid var(--bg-panel-edge);
+  background: rgba(20, 25, 22, 0.82);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+}
+.metrics-toggle:hover {
+  color: var(--amber-hot);
+  border-color: var(--steel);
+}
+
+/* Dismissible inspect hint. */
+.inspect-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  font-size: 0.62rem;
+  color: var(--text-dim);
+}
+.inspect-hint .hint-x {
+  margin-left: auto;
 }
 
 .led {
@@ -875,18 +993,140 @@ body {
 
 .bottom-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: center;
-  gap: 0.3rem 0.45rem;
+  gap: 0.4rem;
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
   padding: 0.4rem max(0.75rem, env(safe-area-inset-right))
     max(0.4rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
   background: linear-gradient(0deg, rgba(14, 18, 15, 0.6), rgba(14, 18, 15, 0));
   backdrop-filter: blur(2px);
   border-top: none;
+}
+
+/* --- Command Dock (Select + universal tool-release) + tabbed toolbar ------ */
+.dock-rail {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+.tool-dock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.2rem;
+  white-space: nowrap;
+}
+/* Neutral (Select) dock stays calm even though it carries .active as the select
+   tool — 0,4,0 beats .tool-btn.active (0,2,0). */
+.tool-btn.tool-dock:not(.armed):not(.placed) {
+  background: rgba(20, 25, 22, 0.85);
+  border-color: var(--bg-panel-edge);
+  color: var(--text);
+}
+.tool-dock .dock-hint {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+}
+.tool-dock .dock-x {
+  display: none;
+}
+.tool-dock.armed {
+  color: #14100a;
+  background: var(--amber);
+  border-color: var(--amber-hot);
+  box-shadow: 0 0 0 2px var(--amber-hot), 0 0 14px rgba(240, 192, 64, 0.4);
+  animation: dock-pop 0.16s ease-out;
+}
+.tool-dock.armed .dock-hint {
+  color: #3a2f14;
+}
+.tool-dock.armed .dock-x {
+  display: inline;
+  margin-left: 0.3rem;
+  font-weight: 700;
+}
+/* 0,3,0 so the green "Placed" flash beats .tool-btn.active (0,2,0), which the
+   dock re-acquires when disarmToSelect fires just before flashDockPlaced. */
+.tool-btn.tool-dock.placed {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #0b120c;
+}
+.tool-btn.tool-dock.placed .dock-hint {
+  color: #0b120c;
+}
+@keyframes dock-pop {
+  from {
+    transform: scale(0.96);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+.bottom-bar.tool-armed {
+  box-shadow: inset 0 2px 0 0 var(--amber);
+}
+.tool-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.tool-tab {
+  appearance: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+.tool-tab.active {
+  color: var(--amber-hot);
+  border-bottom-color: var(--amber);
+}
+.tabbar-caret {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+}
+.tool-scroll {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  scrollbar-width: none;
+}
+.tool-scroll::-webkit-scrollbar {
+  display: none;
+}
+/* Desktop: the active tab's buttons WRAP so every one is reachable without a
+   mouse-hostile horizontal scroll. Phones switch this to a swipe row (media). */
+.tool-scroll .tool-group[data-tab] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  border-left: none;
+  padding-left: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tool-scroll .tool-group[hidden] {
+  display: none;
+}
+.bottom-bar[data-collapsed="true"] .tool-scroll {
+  display: none;
 }
 
 .tool-btn {
@@ -928,20 +1168,6 @@ body {
   border-left: 1px solid rgba(90, 106, 94, 0.28);
 }
 
-.tool-group[data-group="mode"] {
-  padding-left: 0;
-  border-left: none;
-}
-
-/* Inline group caption (not a full row) keeps the bar compact. */
-.tool-group-label {
-  font-size: 0.54rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--steel-dim);
-  margin-right: 0.1rem;
-}
-
 /* Showcase action buttons (verbs) — larger and amber. */
 .tool-btn.action {
   font-size: 0.78rem;
@@ -962,25 +1188,25 @@ body {
 }
 
 .tool-meta {
-  flex-basis: 100%;
+  flex: 0 1 auto;
   align-self: center;
   font-size: 0.64rem;
   color: var(--text-dim);
-  text-align: center;
-  margin-top: 0.1rem;
+  text-align: right;
+  margin-left: auto;
   /* Single line, clipped — a wrapping status message must never change the
      toolbar height (which would resize/jitter the map above it). */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  max-width: 100%;
+  max-width: 34%;
 }
 
 .toast {
   position: absolute;
   left: 50%;
-  bottom: 1rem;
+  bottom: 3.75rem; /* clear the guide bar + bottom toolbar so it can't overlap */
   transform: translateX(-50%);
   background: rgba(20, 24, 20, 0.92);
   border: 1px solid var(--amber);
@@ -1085,58 +1311,91 @@ body {
   color: var(--amber-hot);
 }
 
-@media (max-width: 720px) {
-  /* Canvas-first: keep the chrome tight in BOTH orientations so the map owns
-     the screen instead of being crushed between a tall HUD and a wrapped
-     toolbar. Top HUD stays a compact 1–2 rows (not a tall column). */
+/* ---- Mobile PORTRAIT: stacked Command Dock, canvas maximized -------------- */
+/* orientation-scoped so a short desktop window never gets phone chrome. */
+@media (orientation: portrait) and (max-width: 700px) {
   .top-bar {
-    flex-wrap: wrap;
-    gap: 0.3rem 0.55rem;
-    padding: max(0.4rem, env(safe-area-inset-top)) 0.55rem 0.4rem 0.55rem;
+    flex-wrap: nowrap;
+    gap: 0.3rem;
+    padding: max(0.35rem, env(safe-area-inset-top)) 0.5rem 0.35rem;
   }
   .brand {
-    font-size: 1.05rem;
+    font-size: 1rem;
   }
   .brand span {
-    display: none; /* drop the "// facility" subtitle to save a line */
+    display: none;
   }
   .hud-stats {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
     gap: 0.5rem;
     font-size: 0.7rem;
+  }
+  .hud-stats::-webkit-scrollbar {
+    display: none;
   }
   .hud-actions {
     gap: 0.25rem;
   }
 
-  /* The big one: the toolbar becomes ONE horizontally-swipeable row instead of
-     wrapping into 6+ rows — reclaims most of the vertical space on a phone. */
+  /* Command Dock as a bottom sheet: 3 stacked rows (dock · tabs · tool row). */
   .bottom-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    max-height: 42dvh;
+    padding: 0.25rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
+  }
+  .dock-rail {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+  }
+  .tool-dock {
+    width: 100%;
+    min-height: 2.6rem;
+    justify-content: center;
+  }
+  .tool-tabs .tool-tab {
+    flex: 1 1 0;
+    min-height: 2.4rem;
+    text-align: center;
+  }
+  .tabbar-caret {
+    flex: 0 0 auto;
+  }
+  .tool-scroll {
     flex-wrap: nowrap;
     overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    gap: 0.3rem;
-    padding: 0.3rem 0.5rem;
-    scrollbar-width: none; /* Firefox — hide the scrollbar, it's swipe-scrolled */
+    gap: 0.4rem;
+    scrollbar-width: none;
   }
-  .bottom-bar::-webkit-scrollbar {
+  .tool-scroll::-webkit-scrollbar {
     display: none;
   }
-  .tool-group {
-    flex: 0 0 auto;
+  /* Phone: single swipe row (touch scroll works), not the desktop wrap. */
+  .tool-scroll .tool-group[data-tab] {
     flex-wrap: nowrap;
-    border-left: none; /* no dividers in a scroll row */
-    padding-left: 0;
-  }
-  .tool-group-label {
-    display: none; /* the "Actions"/"Facilities" labels — cost width, low value */
+    flex: 0 0 auto;
   }
   .tool-meta {
-    display: none; /* status line — the triage panel + toasts carry this on mobile */
+    display: none;
+  }
+  .stage-wrap {
+    min-height: 40dvh; /* map is never a thin strip */
   }
 
-  /* Overlay panels start collapsed on mobile (main.ts); when opened they're
-     narrower and height-capped so they never fully bury the map. */
+  .objectives {
+    top: 3rem;
+    left: 0.5rem;
+    right: 0.5rem;
+    transform: none;
+    width: auto;
+  }
+  .guide-bar {
+    display: none;
+  }
   .inspect-panel,
   .triage-panel,
   .fleet-panel,
@@ -1147,43 +1406,102 @@ body {
     max-height: 46vh;
     overflow: auto;
   }
-
-  /* Select/deselect floats top-right — always thumb-reachable without swiping
-     the toolbar back to its start (it's removed from the toolbar row flow). */
-  .bottom-bar .tool-group[data-group="mode"] {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 3rem);
-    right: 0.5rem;
-    z-index: 12;
-    padding: 0;
-    border: none;
-  }
-  .bottom-bar .tool-group[data-group="mode"] .tool-btn {
-    background: rgba(16, 20, 18, 0.92);
-    border: 1px solid var(--amber);
-    padding: 0.4rem 0.75rem;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-  }
-  /* Nudge the SCADA chip down so it clears the floating Select button. */
   .dash-panel {
-    top: 3.4rem;
+    top: 0.75rem; /* old top-right Select float is gone → no dodge needed */
   }
 }
 
-/* Landscape phones have very little height — squeeze the bars further so the
-   map still gets the middle. */
-@media (max-height: 500px) and (max-width: 920px) {
+/* ---- Mobile LANDSCAPE: one horizontal-scroll bar, Dock sticky-left -------- */
+/* orientation + height catches every phone in landscape; tablets are exempt. */
+@media (orientation: landscape) and (max-height: 600px) and (pointer: coarse) {
   .top-bar {
-    padding-top: max(0.3rem, env(safe-area-inset-top));
-    padding-bottom: 0.3rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
     gap: 0.25rem 0.5rem;
+    padding: 0.2rem max(0.5rem, env(safe-area-inset-right)) 0.2rem
+      max(0.5rem, env(safe-area-inset-left));
+    scrollbar-width: none;
   }
+  .top-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .brand span {
+    display: none;
+  }
+  .hud-stats {
+    font-size: 0.66rem;
+  }
+
   .bottom-bar {
-    padding-top: 0.25rem;
-    padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    overflow-x: auto;
+    gap: 0.35rem;
+    scrollbar-width: none;
+    padding: 0.2rem env(safe-area-inset-right)
+      calc(0.2rem + env(safe-area-inset-bottom)) env(safe-area-inset-left);
   }
-  .tool-btn {
-    padding-top: 0.3rem;
-    padding-bottom: 0.3rem;
+  .bottom-bar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Dock + tabs stay pinned left as one cluster while tools scroll under them —
+     release AND tab-switch are always one tap. Exactly ONE scroll container. */
+  .dock-rail {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    background: linear-gradient(90deg, rgba(14, 18, 15, 0.97) 85%, transparent);
+    padding-right: 0.5rem;
+  }
+  .tool-scroll {
+    overflow: visible;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 0.35rem;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .tool-scroll .tool-group[data-tab] {
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
+  }
+  .tool-dock .dock-hint {
+    display: none; /* width is scarce in landscape */
+  }
+  .tool-meta {
+    display: none;
+  }
+  .stage-wrap {
+    min-height: 45dvh;
+  }
+
+  .inspect-panel,
+  .dash-panel,
+  .fleet-panel,
+  .ledger-panel {
+    width: min(240px, 34vw);
+    font-size: 0.64rem;
+    max-height: 40vh;
+    overflow: auto;
+  }
+  .triage-panel {
+    top: auto;
+    bottom: 0.5rem;
+  }
+  .objectives {
+    left: 0.5rem;
+    right: auto;
+    top: auto;
+    bottom: 3rem;
+    transform: none;
+    max-width: min(340px, 44vw);
+  }
+  .guide-bar {
+    display: none;
   }
 }

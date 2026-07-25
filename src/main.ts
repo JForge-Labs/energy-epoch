@@ -46,13 +46,16 @@ app.innerHTML = `
     <div class="brand">Energy Epoch <span>// facility</span></div>
     <div class="hud-stats">
       <div>Cash <strong id="stat-cash">$0</strong></div>
-      <div>Debt <strong id="stat-debt">$0</strong></div>
-      <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
       <div id="rep-wrap" class="clickable" title="Reputation (0–100). Low rep brings fines, then a shut-in order at 0. Falls from flaring and spills. Click for status.">Rep <strong id="stat-rep">70</strong></div>
-      <div title="Cumulative oil revenue sold this lease.">Oil <strong id="stat-oil">$0</strong></div>
-      <div title="Days elapsed on the lease.">Day <strong id="stat-day">1</strong></div>
       <div id="ops-wrap" class="clickable" title="Operating status. GREEN = revenue beats interest + opex. RED = losing money. Click for the exact reason.">Ops <strong id="stat-ops">—</strong></div>
-      <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
+      <div title="Days elapsed on the lease.">Day <strong id="stat-day">1</strong></div>
+      <div class="metrics-more" id="metrics-more" data-open="false">
+        <div>Debt <strong id="stat-debt">$0</strong></div>
+        <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
+        <div title="Live crude price ($/bbl).">Oil <strong id="stat-oil">$0</strong></div>
+        <div id="wx-wrap" title="Weather affects haul speed & drilling">Wx <strong id="stat-wx">clear</strong></div>
+      </div>
+      <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats" aria-label="More stats">⋯</button>
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
         <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
@@ -74,11 +77,6 @@ app.innerHTML = `
   <div class="stage-wrap">
     <canvas id="game-canvas"></canvas>
     <div class="hover-tip" id="hover-tip"></div>
-    <div class="inspect-panel" id="inspect-panel">
-      <div class="inspect-title">Inspect</div>
-      <div id="inspect-body">Hover tiles · Right-click for actions</div>
-      <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span> · Roads need N/E/S/W edges</div>
-    </div>
     <div class="triage-panel" id="triage-panel" data-level="ok">
       <div class="triage-title"><span class="triage-dot"></span><span class="triage-label">Next bottleneck</span></div>
       <div class="triage-msg" id="triage-msg">—</div>
@@ -96,6 +94,17 @@ app.innerHTML = `
       <div id="ledger-body">—</div>
     </div>
     <div class="guide-bar" id="guide-bar"></div>
+    <div class="objectives" id="objectives" hidden>
+      <div class="obj-head">
+        <span class="obj-title">Get to first oil</span>
+        <button class="obj-x" id="obj-dismiss" type="button" aria-label="Dismiss">✕</button>
+      </div>
+      <ol class="obj-list">
+        <li class="obj-step" data-step="explore"><span class="obj-check"></span>Explore a 3×3 to survey the odds</li>
+        <li class="obj-step" data-step="drill"><span class="obj-check"></span>Drill a <b>Good</b> or <b>Sweet</b> tile</li>
+        <li class="obj-step" data-step="road"><span class="obj-check"></span>Road the pad → get <b>crude to a battery</b></li>
+      </ol>
+    </div>
     <div class="context-menu" id="context-menu" hidden></div>
     <div class="toast" id="toast"></div>
     <div class="confirm-banner" id="confirm-banner" hidden></div>
@@ -131,40 +140,47 @@ app.innerHTML = `
       </div>
     </div>
   </div>
-  <footer class="bottom-bar">
-    <div class="tool-group" data-group="mode">
-      <button class="tool-btn active" data-tool="select" type="button">Select</button>
+  <footer class="bottom-bar" id="bottom-bar" data-collapsed="false">
+    <div class="dock-rail" id="dock-rail">
+      <button class="tool-btn tool-dock active" id="tool-dock" data-tool="select" type="button" aria-pressed="false">
+        <span class="dock-mark" id="dock-mark">●</span>
+        <span class="dock-name" id="dock-name">Select</span>
+        <span class="dock-hint" id="dock-hint">tap a tile to inspect</span>
+        <span class="dock-x" aria-hidden="true">✕ Done</span>
+      </button>
+      <div class="tool-tabs" id="tool-tabs" role="tablist">
+        <button class="tool-tab active" data-tab="actions" role="tab" type="button">Actions</button>
+        <button class="tool-tab" data-tab="build" role="tab" type="button">Build</button>
+        <button class="tool-tab" data-tab="services" role="tab" type="button">Services</button>
+        <button class="tabbar-caret" id="tabbar-caret" type="button" aria-label="Collapse toolbar">▾</button>
+      </div>
     </div>
-    <div class="tool-group" data-group="actions">
-      <span class="tool-group-label">Actions</span>
-      <button class="tool-btn action" data-tool="drill" type="button">Drill</button>
-      <button class="tool-btn action" data-tool="choke" type="button">Choke</button>
-      <button class="tool-btn action" data-tool="move_rig" type="button">Move rig</button>
-      <button class="tool-btn action" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn action" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn action" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
-    </div>
-    <div class="tool-group" data-group="facilities">
-      <span class="tool-group-label">Facilities</span>
-      <button class="tool-btn" data-tool="road" type="button">Road</button>
-      <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="gas_plant" type="button">Gas plant · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="refinery" type="button">Refinery · $${(REFINERY_COST / 1000000).toFixed(1)}M</button>
-    </div>
-    <div class="tool-group" data-group="machinery">
-      <span class="tool-group-label">Machinery</span>
-      <button class="tool-btn" data-tool="truck" type="button">Truck 400 · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="small_truck" type="button">Truck 200 · $${(SMALL_TRUCK_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
-    </div>
-    <div class="tool-group" data-group="services">
-      <span class="tool-group-label">Services</span>
-      <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
-      <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
-      <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
-      <button class="tool-btn" data-tool="draw_credit" type="button">Draw $250k</button>
+    <div class="tool-scroll" id="tool-scroll">
+      <div class="tool-group" data-tab="actions">
+        <button class="tool-btn action" data-tool="drill" type="button">Drill</button>
+        <button class="tool-btn action" data-tool="choke" type="button">Shut in</button>
+        <button class="tool-btn action" data-tool="move_rig" type="button">Move rig</button>
+        <button class="tool-btn action" data-tool="explore" type="button">Explore · $${(EXPLORE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn action" data-tool="add_tank" type="button">+Tank · $${(ADD_TANK_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn action" data-tool="gas_line" type="button">Gas line · $${(GAS_LINE_COST / 1000).toFixed(0)}k</button>
+      </div>
+      <div class="tool-group" data-tab="build" hidden>
+        <button class="tool-btn" data-tool="road" type="button">Road</button>
+        <button class="tool-btn" data-tool="oil_pipe" type="button">Oil pipe · $${(OIL_PIPE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="gas_pipe" type="button">Gas pipe · $${(GAS_PIPE_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="battery" type="button">Battery · $${(BATTERY_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="gas_plant" type="button">Gas Refinery · $${(GAS_PLANT_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="refinery" type="button">Refinery · $${(REFINERY_COST / 1000000).toFixed(1)}M</button>
+        <button class="tool-btn" data-tool="truck" type="button">Truck 400 · $${(EXTRA_TRUCK_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="small_truck" type="button">Truck 200 · $${(SMALL_TRUCK_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="upgrade_rig" type="button">Rig+ · $${(UPGRADE_RIG_COST / 1000).toFixed(0)}k</button>
+      </div>
+      <div class="tool-group" data-tab="services" hidden>
+        <button class="tool-btn" data-tool="sell" type="button">Sell 75%</button>
+        <button class="tool-btn" data-tool="buy_permit" type="button">Permit · $${(PERMIT_COST / 1000).toFixed(0)}k</button>
+        <button class="tool-btn" data-tool="pay_debt" type="button">Pay debt</button>
+        <button class="tool-btn" data-tool="draw_credit" type="button">Draw $250k</button>
+      </div>
     </div>
     <div class="tool-meta" id="tool-meta">Booting…</div>
   </footer>
@@ -180,7 +196,11 @@ let ctx: CanvasRenderingContext2D | null = USE_CANVAS
   : null;
 let pixi: PixiRenderer | null = null;
 const hoverTip = document.querySelector<HTMLDivElement>("#hover-tip")!;
-const inspectBody = document.querySelector<HTMLDivElement>("#inspect-body")!;
+// The Inspect panel was removed as redundant (hover tooltip on desktop, toast +
+// right-click state header on mobile). inspectBody is now a detached sink so the
+// existing write-sites keep working; the same text also flows to game.message
+// (bottom status line) and flash() toasts.
+const inspectBody = document.createElement("div");
 const dashBody = document.querySelector<HTMLDivElement>("#dash-body")!;
 const ledgerBody = document.querySelector<HTMLDivElement>("#ledger-body")!;
 const dashPanel = document.querySelector<HTMLDivElement>("#dash-panel")!;
@@ -207,7 +227,7 @@ dashBody.innerHTML = `
   <div class="meter"><span class="meter-cap">Treat</span><div class="meter-track"><div class="meter-fill" data-k="treatFill"></div></div><span class="meter-val" data-k="treatVal"></span></div>
   <div class="scada-stage"><span class="led-dot" data-k="salesLed"></span><span class="scada-name">Sales</span><span class="scada-pill" data-k="salesPill"></span></div>
   <div class="meter"><span class="meter-cap">Sales</span><div class="meter-track"><div class="meter-fill" data-k="salesFill"></div></div><span class="meter-val" data-k="salesVal"></span></div>
-  <div class="scada-stage"><span class="led-dot" data-k="gasLed"></span><span class="scada-name">Gas plant</span><span class="scada-val" data-k="gasVal"></span></div>
+  <div class="scada-stage"><span class="led-dot" data-k="gasLed"></span><span class="scada-name">Gas Refinery</span><span class="scada-val" data-k="gasVal"></span></div>
   <div class="meter rep-meter"><span class="meter-cap">Rep</span><div class="meter-track"><div class="meter-fill" data-k="repFill"></div></div><span class="meter-val" data-k="repVal"></span></div>
   <div class="scada-econ"><span>rev <b data-k="rev"></b></span><span>opex <b data-k="opex"></b></span><span>int <b data-k="int"></b></span></div>
   <div class="scada-trucks" data-k="trucks"></div>
@@ -526,10 +546,57 @@ function setActiveTool(tool: BuildTool) {
     btn.classList.toggle("active", (btn as HTMLElement).dataset.tool === tool);
   });
   syncMeta();
+  updateToolDock();
 }
 
 function disarmToSelect() {
   setActiveTool("select");
+}
+
+// --- Command Dock: Select IS the universal tool-release control -------------
+// Latched tools stay armed after use (repeated place / toggle / pathing); the
+// Dock morphs in place to show the held tool + a big "✕ Done" so dropping it is
+// one obvious tap — the fix for "releasing a latched tool is unintuitive".
+const LATCHED = new Set<BuildTool>([
+  "road", "oil_pipe", "gas_pipe", "sell", "choke", "move_rig", "drill", "explore",
+]);
+const TOOL_LABEL: Record<string, string> = {
+  select: "Select", drill: "Drill", choke: "Shut in", move_rig: "Move rig",
+  explore: "Explore", add_tank: "Tank", gas_line: "Gas line", road: "Road",
+  oil_pipe: "Oil pipe", gas_pipe: "Gas pipe", battery: "Battery",
+  gas_plant: "Gas Refinery", refinery: "Refinery", sell: "Sell",
+};
+const TOOL_HINT: Record<string, string> = {
+  select: "tap a tile to inspect", drill: "tap tiles to queue wells",
+  road: "drag to lay road", oil_pipe: "drag to lay oil pipe",
+  gas_pipe: "drag to lay gas pipe", sell: "drag over tiles to sell",
+  choke: "tap a well to shut it in", move_rig: "tap to move the rig",
+  explore: "tap to survey a 3×3", add_tank: "tap a pad to add a tank",
+  gas_line: "tap to tie in the nearest well", battery: "tap to place battery",
+  gas_plant: "tap to place gas refinery", refinery: "tap to place refinery",
+};
+let dockTimer = 0;
+function updateToolDock() {
+  const dock = document.getElementById("tool-dock");
+  if (!dock) return;
+  const armed = game.tool !== "select";
+  window.clearTimeout(dockTimer);
+  dock.classList.remove("placed");
+  dock.classList.toggle("armed", armed);
+  dock.setAttribute("aria-pressed", String(armed));
+  document.getElementById("bottom-bar")?.classList.toggle("tool-armed", armed);
+  document.getElementById("dock-mark")!.textContent = armed ? "◉" : "●";
+  document.getElementById("dock-name")!.textContent = TOOL_LABEL[game.tool] ?? game.tool;
+  document.getElementById("dock-hint")!.textContent = TOOL_HINT[game.tool] ?? "";
+}
+// Brief "✓ placed → Select" pulse so a one-shot tool's auto-return is *seen*.
+function flashDockPlaced() {
+  const dock = document.getElementById("tool-dock");
+  if (!dock) return;
+  dock.classList.add("placed");
+  document.getElementById("dock-name")!.textContent = "Placed";
+  document.getElementById("dock-hint")!.textContent = "✓ back to Select";
+  dockTimer = window.setTimeout(updateToolDock, 700);
 }
 
 const SAVE_PREFIX = "energy-epoch-save";
@@ -684,9 +751,20 @@ function bootGame(restore: boolean, config?: Partial<GameConfig>): boolean {
   gameoverEl.classList.remove("is-open");
   gameoverEl.hidden = true;
   pinnedInspect = "";
-  inspectBody.textContent = "Hover tiles · Right-click for actions";
+  inspectBody.textContent = "Tap a tile to inspect.";
+  // Onboarding objectives are per-lease — clear the sticky step latches so a
+  // fresh lease re-derives them from this game's dashboard (objectivesDone stays
+  // global: the tutorial is shown once, not on every new lease).
+  uiState.objExplore = false;
+  uiState.objDrill = false;
+  uiState.objRoad = false;
+  document
+    .querySelectorAll("#objectives .obj-step.done")
+    .forEach((el) => el.classList.remove("done"));
+  document.getElementById("objectives")?.classList.remove("obj-complete");
   const restored = restore ? loadGame() : false;
   syncAll();
+  setActiveTool(game.tool); // sync the active button + Dock to the (restored) tool
   return restored;
 }
 
@@ -1002,7 +1080,22 @@ document.querySelectorAll(".spd-btn").forEach((btn) => {
 
 // --- Collapsible panels (maximize map view) ---
 const UI_KEY = "energy-epoch-ui";
-type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean; fleet?: boolean; triage?: boolean };
+type UiState = {
+  // overlay-panel collapse flags
+  inspect?: boolean; dash?: boolean; ledger?: boolean; fleet?: boolean; triage?: boolean;
+  // bottom toolbar
+  tab?: "actions" | "build" | "services"; // active tab (default "actions")
+  toolbarCollapsed?: boolean; // caret ▾ hides the tool row
+  // top-bar secondary readouts folded away
+  metricsCollapsed?: boolean;
+  // objectives — sticky per-step latches + retire flag
+  objExplore?: boolean; objDrill?: boolean; objRoad?: boolean; objectivesDone?: boolean;
+  // dismissible inspect hint (false once dismissed)
+  inspectHint?: boolean;
+};
+// The overlay-panel collapse flags (all boolean) — used by the generic
+// collapse loops, which mustn't touch the non-boolean keys (tab, etc.).
+type PanelKey = "inspect" | "dash" | "ledger" | "fleet" | "triage";
 function loadUi(): UiState {
   try {
     return JSON.parse(localStorage.getItem(UI_KEY) || "{}");
@@ -1021,16 +1114,17 @@ const uiState = loadUi();
 // Mobile: start the overlay panels collapsed to chips so the map isn't buried
 // under them (one tap on a title opens it). Triage stays visible — it's the
 // guide. Only defaults when the user hasn't chosen, so it respects prior taps.
-if (
-  typeof window !== "undefined" &&
-  window.matchMedia?.("(max-width: 720px)").matches
-) {
-  for (const k of ["inspect", "dash", "ledger", "fleet"] as (keyof UiState)[]) {
+// Phone chrome = the two orientation-scoped CSS blocks; mirror them here so the
+// JS defaults (panels collapsed, metrics folded) fire on the same devices,
+// including large phones in landscape (wide but short).
+const PHONE_MEDIA =
+  "(orientation: portrait) and (max-width: 700px), (orientation: landscape) and (max-height: 600px) and (pointer: coarse)";
+if (typeof window !== "undefined" && window.matchMedia?.(PHONE_MEDIA).matches) {
+  for (const k of ["dash", "ledger", "fleet"] as PanelKey[]) {
     if (uiState[k] === undefined) uiState[k] = true;
   }
 }
-const PANELS: { sel: string; key: keyof UiState }[] = [
-  { sel: "#inspect-panel", key: "inspect" },
+const PANELS: { sel: string; key: PanelKey }[] = [
   { sel: "#dash-panel", key: "dash" },
   { sel: "#ledger-panel", key: "ledger" },
   { sel: "#fleet-panel", key: "fleet" },
@@ -1067,6 +1161,114 @@ function toggleAllPanels() {
   }
   saveUi();
 }
+
+// --- Bottom-toolbar tabs (Actions / Build / Services) -----------------------
+function setTab(tab: NonNullable<UiState["tab"]>) {
+  uiState.tab = tab;
+  saveUi();
+  document.querySelectorAll<HTMLElement>(".tool-tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.tab === tab);
+  });
+  document.querySelectorAll<HTMLElement>(".tool-group[data-tab]").forEach((g) => {
+    g.hidden = g.dataset.tab !== tab;
+  });
+  const scroll = document.getElementById("tool-scroll");
+  if (scroll) scroll.scrollLeft = 0;
+}
+document.querySelectorAll<HTMLElement>(".tool-tab").forEach((t) => {
+  t.addEventListener("click", () => setTab(t.dataset.tab as NonNullable<UiState["tab"]>));
+});
+setTab(uiState.tab ?? "actions"); // restore on boot
+
+// Caret collapses the tool row down to just the Dock + tabs.
+function applyToolbarCollapsed() {
+  document
+    .getElementById("bottom-bar")
+    ?.setAttribute("data-collapsed", String(!!uiState.toolbarCollapsed));
+}
+applyToolbarCollapsed();
+document.getElementById("tabbar-caret")?.addEventListener("click", () => {
+  uiState.toolbarCollapsed = !uiState.toolbarCollapsed;
+  applyToolbarCollapsed();
+  saveUi();
+});
+
+// --- Top-bar secondary-metrics fold -----------------------------------------
+function applyMetrics() {
+  document
+    .getElementById("metrics-more")
+    ?.setAttribute("data-open", String(!uiState.metricsCollapsed));
+}
+if (
+  uiState.metricsCollapsed === undefined &&
+  typeof window !== "undefined" &&
+  window.matchMedia?.(PHONE_MEDIA).matches
+) {
+  uiState.metricsCollapsed = true; // default folded on phones
+}
+applyMetrics();
+document.getElementById("metrics-toggle")?.addEventListener("click", () => {
+  uiState.metricsCollapsed = !uiState.metricsCollapsed;
+  applyMetrics();
+  saveUi();
+});
+
+// --- Objectives card (replaces the money-loop banner) -----------------------
+// Sticky ||= latches so scrapping infra mid-tutorial never un-completes a step.
+// Runs every frame from syncDash, but only writes localStorage when a latch
+// flips, and only celebrates once.
+let objCelebrated = false;
+function evalObjectives(d: ReturnType<typeof game.dashboard>) {
+  const box = document.getElementById("objectives");
+  if (!box) return;
+  // Stay visible during the 1.8s celebration; hide once retired.
+  if (uiState.objectivesDone && !objCelebrated) {
+    box.hidden = true;
+    return;
+  }
+  const e0 = !!uiState.objExplore,
+    d0 = !!uiState.objDrill,
+    r0 = !!uiState.objRoad;
+  const explore = (uiState.objExplore ||= d.surveyedCount > 0);
+  const drill = (uiState.objDrill ||= d.wellCount > 0);
+  const road = (uiState.objRoad ||= d.crude > 0);
+  const changed = explore !== e0 || drill !== d0 || road !== r0;
+  const steps: [string, boolean][] = [
+    ["explore", explore],
+    ["drill", drill],
+    ["road", road],
+  ];
+  for (const [s, flag] of steps) {
+    box.querySelector(`.obj-step[data-step="${s}"]`)?.classList.toggle("done", flag);
+  }
+  box.hidden = false;
+  if (changed) saveUi();
+  if (explore && drill && road) {
+    if (!objCelebrated) {
+      objCelebrated = true;
+      uiState.objectivesDone = true; // persist atomically with the sub-latches
+      saveUi();
+      box.classList.add("obj-complete");
+      flash("Onboarding complete — you're pumping. Good luck out there.");
+      window.setTimeout(() => {
+        objCelebrated = false; // now the retire guard hides the card
+        const b = document.getElementById("objectives");
+        if (b) b.hidden = true;
+      }, 1800);
+    }
+  } else if (changed) {
+    flash("Objective complete.");
+  }
+}
+document.getElementById("obj-dismiss")?.addEventListener("click", () => {
+  uiState.objectivesDone = true;
+  saveUi();
+  const b = document.getElementById("objectives");
+  if (b) b.hidden = true;
+});
+
+// Render the neutral Dock once now that its elements exist.
+updateToolDock();
 
 document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   flash(game.opsReason);
@@ -1150,6 +1352,11 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
       return;
     }
 
+    // Tap the armed latched tool's own button again = drop back to Select.
+    if (tool === game.tool && LATCHED.has(tool)) {
+      disarmToSelect();
+      return;
+    }
     // Map-targeted tools
     setActiveTool(tool);
   });
@@ -1202,17 +1409,19 @@ function handleTileClick(tile: { x: number; y: number }) {
     game.placeGasLine(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
+    flashDockPlaced();
     syncAll();
     return;
   }
 
   if (tool === "gas_plant") {
-    if (!askConfirm("gas_plant", `2×2 plant with top-left at ${tile.x},${tile.y}.`)) {
+    if (!askConfirm("gas_plant", `2×2 gas refinery with top-left at ${tile.x},${tile.y}.`)) {
       return;
     }
     game.placeGasPlant(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
+    flashDockPlaced();
     syncAll();
     return;
   }
@@ -1224,6 +1433,7 @@ function handleTileClick(tile: { x: number; y: number }) {
     game.placeBattery(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
+    flashDockPlaced();
     syncAll();
     return;
   }
@@ -1235,6 +1445,7 @@ function handleTileClick(tile: { x: number; y: number }) {
     game.placeRefinery(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
+    flashDockPlaced();
     syncAll();
     return;
   }
@@ -1246,6 +1457,7 @@ function handleTileClick(tile: { x: number; y: number }) {
     game.addTank(tile.x, tile.y);
     flash(game.message);
     disarmToSelect();
+    flashDockPlaced();
     syncAll();
     return;
   }
@@ -1641,7 +1853,7 @@ function openContextMenu(
   }
   if (well && well.status === "producing") {
     items.push({
-      label: well.choked ? "Bring well online" : "Choke well",
+      label: well.choked ? "Bring well online" : "Shut in well",
       act: () => game.toggleChoke(tile.x, tile.y),
     });
     items.push({ label: `Gas line (${k(GAS_LINE_COST)})`, act: () => game.placeGasLine(tile.x, tile.y) });
@@ -1673,9 +1885,9 @@ function openContextMenu(
   items.push({
     label: "Inspect",
     act: () => {
-      pinnedInspect = game.inspectAt(tile.x, tile.y);
-      inspectBody.textContent = pinnedInspect;
-      game.message = pinnedInspect; // so the shared flash shows inspect text
+      const info = game.inspectAt(tile.x, tile.y);
+      game.message = info; // bottom status line
+      flash(info); // toast (the Inspect panel is gone)
     },
   });
 
@@ -1733,7 +1945,7 @@ function syncHud() {
       ? "var(--danger)"
       : game.player.reputation < 45
         ? "var(--amber-hot)"
-        : "var(--amber-hot)";
+        : "var(--ok)";
   document.querySelector("#stat-oil")!.textContent = `$${game.market.oilPrice.toFixed(2)}`;
   document.querySelector("#stat-day")!.textContent = game.market.day.toFixed(1);
   const ops = document.querySelector("#stat-ops")!;
@@ -1759,14 +1971,10 @@ function syncDash() {
   if (!ledgerModal.hidden) renderLedgerModal();
   triagePanel.dataset.level = d.triage.level;
   triageMsg.textContent = d.triage.msg;
-  // Bug #8: before any production exists (no producing wells / no income
-  // path), the generic objective doesn't explain how to become profitable.
-  // Surface the full money loop in the guide line. Leave the game-over guide
-  // and every post-production guide untouched (triage panel is separate).
-  guideBar.textContent =
-    !d.gameOver && d.wellCount === 0
-      ? "Money loop: Explore → Drill a Good/Sweet LAND tile → Road pad→battery→refinery → trucks haul crude→clean→Sell."
-      : d.guide;
+  // Onboarding now lives in the Objectives card; the guide line just carries
+  // the live per-state hint.
+  guideBar.textContent = d.guide;
+  evalObjectives(d);
 
   if (d.gameOver) {
     gameoverEl.hidden = false;
@@ -1836,6 +2044,7 @@ window.setInterval(() => {
 const restored = loadGame();
 refreshProfileUI();
 syncAll();
+setActiveTool(game.tool); // reflect any tool restored from the save on the Dock + tab
 if (restored) {
   flash(`Profile "${profiles.active}" restored. Autosaves as you play.`);
 } else {

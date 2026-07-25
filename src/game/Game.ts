@@ -326,8 +326,8 @@ export class Game {
       drill: "Wildcat under the rig — simple random IP.",
       road: "Lay lease road ($1.2k/tile). Trucks need roads. Bridges cross creeks.",
       oil_pipe: "Oil pipe: drag battery → refinery for hands-free clean-oil sales.",
-      gas_pipe: "Gas pipe: drag wells → gas plant to sell gas at a premium.",
-      gas_plant: "Place a 2×2 gas plant — premium buyer for piped gas.",
+      gas_pipe: "Gas pipe: drag wells → gas refinery to sell gas at a premium.",
+      gas_plant: "Place a 2×2 gas refinery — premium buyer for piped gas.",
       battery: "Place a 2×1 tank battery — more crude treating (crude→clean).",
       refinery: "Place a 2×2 refinery — another daily sales slot.",
       add_tank: "Click a wellhead tank to add crude storage — fewer overflows between hauls.",
@@ -741,7 +741,7 @@ export class Game {
         const tx = x + dx;
         const ty = y + dy;
         if (tx >= this.config.cols || ty >= this.config.rows) {
-          this.message = "Gas plant needs a 2×2 clear area in bounds.";
+          this.message = "Gas refinery needs a 2×2 clear area in bounds.";
           return false;
         }
         if (blocksBuild(this.tiles[ty][tx].terrain)) {
@@ -756,7 +756,7 @@ export class Game {
     }
     this.player.cash -= GAS_PLANT_COST;
     this.player.opexToday += GAS_PLANT_COST;
-    this.ledger.push(this.market.day, "capex", `Gas plant ${x},${y}`, -GAS_PLANT_COST);
+    this.ledger.push(this.market.day, "capex", `Gas refinery ${x},${y}`, -GAS_PLANT_COST);
     this.buildings.push({
       id: uid("gp"),
       kind: "gas_plant",
@@ -922,7 +922,7 @@ export class Game {
         const refund = refundOf(GAS_PLANT_COST);
         this.buildings = this.buildings.filter((o) => o.id !== b.id);
         this.player.cash += refund;
-        this.ledger.push(this.market.day, "other", "Gas plant salvage", refund);
+        this.ledger.push(this.market.day, "other", "Gas refinery salvage", refund);
         this.message = `Scrapped gas plant, +$${refund.toLocaleString()}.`;
         return true;
       }
@@ -986,7 +986,7 @@ export class Game {
       (w) => w.x === x && w.y === y && w.status === "producing",
     );
     if (!well) {
-      this.message = "Choke needs a producing well.";
+      this.message = "Shut-in needs a producing well.";
       return false;
     }
     well.choked = !well.choked;
@@ -1731,7 +1731,7 @@ export class Game {
       }
       if (b.kind === "gas_line") return "Gas takeaway — sells raw gas, flare off nearby";
       if (b.kind === "gas_plant") {
-        return "Gas plant · premium buyer — run gas pipe from wells to sell here";
+        return "Gas Refinery · premium buyer — run gas pipe from wells to sell here";
       }
       return b.kind;
     }
@@ -2768,7 +2768,7 @@ export class Game {
       if (slotUsed >= slotCap - 1 || (this.oilConnected && slotCap > 0 && slotUsed >= slotCap * 0.95)) {
         return {
           level: "crit",
-          msg: `Sales capped at ${slotCap} bbl/day (refinery slot). Oil pipe/trucks can't exceed it — build another refinery or choke wells.`,
+          msg: `Sales capped at ${slotCap} bbl/day (refinery slot). Oil pipe/trucks can't exceed it — build another refinery or shut in wells.`,
         };
       }
       if (!this.refineryReachable() && !this.oilConnected) {
@@ -2800,7 +2800,7 @@ export class Game {
         };
       }
       if (prodBopd > treatCeiling) {
-        return { level: "crit", msg: `Crude full — treating maxed at ${treatCeiling}/day. Build another battery or choke a well.` };
+        return { level: "crit", msg: `Crude full — treating maxed at ${treatCeiling}/day. Build another battery or shut in a well.` };
       }
       return { level: "warn", msg: "Crude backing up — add a truck (or set one to Crude), or run a crude pipe." };
     }
@@ -2861,6 +2861,7 @@ export class Game {
       oilBopd,
       gasMcfd,
       wellCount: wells.length,
+      surveyedCount: this.player.explorationLevel,
       crude,
       crudeCap,
       clean,
