@@ -1,14 +1,16 @@
 name: Deploy (Cloudflare Workers)
 
-# Builds the Vite SPA and deploys the Worker (dist/ static assets) to
-# Cloudflare. Manual for now (workflow_dispatch). To enable auto-deploy on
-# push, add the two repo secrets below and uncomment the `push` trigger:
+# Production deploy: builds the Vite SPA and publishes the Worker (dist/ static
+# assets) to Cloudflare on every push to `main`. `main` is the production
+# branch — work on feature branches and MERGE to main to ship.
+#
+# One repo secret required:
 #   CLOUDFLARE_API_TOKEN  (Workers Scripts:Edit + Account:Read + Zone:DNS:Edit)
-#   CLOUDFLARE_ACCOUNT_ID (0d3499a5956d3f2f19daf0b351a6b36f)
+# The account ID is read from wrangler.toml, so no second secret is needed.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-  # push:
-  #   branches: [graphics/pixi-atlas-v1]
 
 jobs:
   deploy:
@@ -24,4 +26,3 @@ jobs:
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
