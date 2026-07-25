@@ -180,6 +180,10 @@ export type BuildTool =
   | "draw_credit"
   | "buy_permit";
 
+/** Difficulty. easy = no interest, lease can never be shut in. hard = debt
+ *  interest accrues AND the lease shuts in on rep 0 or sustained insolvency. */
+export type GameMode = "easy" | "hard";
+
 export interface GameConfig {
   cols: number;
   rows: number;

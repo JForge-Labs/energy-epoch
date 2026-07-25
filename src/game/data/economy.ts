@@ -70,6 +70,13 @@ export const GAS_PLANT_PREMIUM = 1.6;
  */
 export const GAS_PLANT_MCFD = 600;
 
+/**
+ * Hard mode only: once a terminal condition holds (reputation ≤ 0, or the
+ * credit facility is maxed AND cash is negative), the player has this many
+ * sim-days to recover before the lease is shut in / the loan is called.
+ */
+export const SHUT_IN_GRACE_DAYS = 5;
+
 /** Additional built facilities (beyond the financed starters). */
 /** A tank battery is a quarter of the gas plant's cost. */
 export const BATTERY_COST = GAS_PLANT_COST / 4;

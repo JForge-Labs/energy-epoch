@@ -337,13 +337,13 @@ console.log("small truck + interest toggle");
   g.buyTruck(200, 50_000);
   const trucks = g.units.filter((u) => u.kind === "truck");
   check("bought a 200 bbl truck", trucks[trucks.length - 1].cargoCap === 200);
-  check("interest (hard mode) defaults off", new Game().interestEnabled === false);
+  check("mode defaults to easy (no interest)", new Game().mode === "easy");
 
-  // Hard mode (interest) is OFF by default — ON must leave the player worse off.
+  // Hard mode accrues interest; Easy does not — Hard must leave you worse off.
   const gHard = new Game();
   const gEasy = new Game();
-  gHard.interestEnabled = true;
-  gEasy.interestEnabled = false;
+  gHard.mode = "hard";
+  gEasy.mode = "easy";
   for (let i = 0; i < 40; i++) {
     gHard.update(0.2);
     gEasy.update(0.2);
@@ -692,6 +692,50 @@ console.log("drill queue (add / toggle-cancel / cap at 6)");
   // Toggling a queued tile cancels it.
   gq.queueDrill(spots[0].x, spots[0].y);
   check("toggle cancels a queued drill", gq.drillQueue.length === 5);
+}
+
+console.log("difficulty modes: easy never shuts in; hard has grace + bankruptcy");
+{
+  // EASY: reputation at 0 must never end the game.
+  const ge = new Game();
+  ge.mode = "easy";
+  ge.player.reputation = 0;
+  for (let i = 0; i < 500; i++) ge.update(0.2);
+  check("easy: rep 0 never shuts in", ge.gameOver === false);
+
+  // HARD: a shut-in clock shows a countdown BEFORE the end (early warning).
+  const gc = new Game();
+  gc.mode = "hard";
+  gc.player.reputation = 0;
+  gc.update(0.2);
+  check(
+    "hard: shut-in countdown surfaced before game-over",
+    gc.shutInInDays() != null && (gc.shutInInDays() ?? 0) > 0 && gc.gameOver === false,
+  );
+
+  // HARD: rep 0 held past the grace → shut-in (reputation reason).
+  const gh = new Game();
+  gh.mode = "hard";
+  gh.player.reputation = 0;
+  for (let i = 0; i < 600 && !gh.gameOver; i++) gh.update(0.2);
+  check("hard: rep 0 shuts in after grace", gh.gameOver === true && /reputation/i.test(gh.gameOverReason));
+
+  // HARD: recovering reputation before the grace cancels the countdown.
+  const gr = new Game();
+  gr.mode = "hard";
+  gr.player.reputation = 0;
+  for (let i = 0; i < 100; i++) gr.update(0.2);
+  gr.player.reputation = 60;
+  gr.update(0.2);
+  check("hard: recovering rep cancels the countdown", gr.shutInInDays() === null && gr.gameOver === false);
+
+  // HARD: insolvency (maxed facility + negative cash) shuts in after the grace.
+  const gb = new Game();
+  gb.mode = "hard";
+  gb.player.credit.debt = 99_999_999;
+  gb.player.cash = -100_000;
+  for (let i = 0; i < 600 && !gb.gameOver; i++) gb.update(0.2);
+  check("hard: insolvency shuts in after grace", gb.gameOver === true && /nsolven|loan|bank/i.test(gb.gameOverReason));
 }
 
 console.log("save round-trip");

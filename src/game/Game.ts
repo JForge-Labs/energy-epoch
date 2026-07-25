@@ -3,6 +3,7 @@ import type {
   BuildingKind,
   BuildTool,
   GameConfig,
+  GameMode,
   MarketState,
   PlayerState,
   SpillEvent,
@@ -34,6 +35,7 @@ import {
   GAS_PIPE_COST,
   GAS_PLANT_COST,
   GAS_PLANT_MCFD,
+  SHUT_IN_GRACE_DAYS,
   GAS_PLANT_PREMIUM,
   hitChance,
   hitChancePercent,
@@ -126,6 +128,7 @@ export interface GameSnapshot {
     strandedDays: [string, number][];
     repStage: number;
     interestBucket: number;
+    terminalDays?: number;
   };
 }
 
@@ -178,8 +181,13 @@ export class Game {
   private pipesDirty = true;
   /** Player time-of-day speed multiplier (0 = paused). */
   timeScale = 1;
-  /** Debt interest ("Hard mode"). Off by default; on = ~11% APR drain. */
-  interestEnabled = false;
+  /** Difficulty. easy = no interest & lease can never be shut in; hard = ~11%
+   *  APR debt drain AND real shut-in on rep 0 or sustained insolvency. */
+  mode: GameMode = "easy";
+  /** Hard-mode grace accumulator (sim-days) while a terminal condition holds. */
+  private terminalDays = 0;
+  /** What's driving the shut-in countdown (or "" when none). */
+  private terminalReason: "" | "reputation" | "bankruptcy" = "";
   /** Move-and-drill: rig target to auto-spud on arrival. */
   private pendingDrillAt: { x: number; y: number } | null = null;
   /** Up to 6 pending drill targets the rig works through automatically. */
@@ -2690,6 +2698,18 @@ export class Game {
    * drives the player to the biggest problem to solve. Returns level + message.
    */
   triage(): { level: "ok" | "warn" | "crit"; msg: string } {
+    // A running shut-in / insolvency countdown outranks every ops bottleneck —
+    // it's the one thing that ends the game.
+    const shutIn = this.shutInInDays();
+    if (shutIn != null) {
+      return {
+        level: "crit",
+        msg:
+          this.terminalReason === "reputation"
+            ? `SHUT-IN in ~${Math.ceil(shutIn)}d — get reputation above 0 (sell gas, stop flaring).`
+            : `INSOLVENCY in ~${Math.ceil(shutIn)}d — clear the overdraft (Sell 75%, pay debt).`,
+      };
+    }
     const batteries = this.buildings.filter((b) => b.kind === "battery");
     if (!batteries.length) {
       return { level: "crit", msg: "No battery on the lease — build one to treat crude." };
@@ -2856,8 +2876,11 @@ export class Game {
         stopped: !!t.stopped,
       })),
       stranded: stranded.length,
-      interestPerDay: this.interestEnabled ? interestDay : 0,
-      interestOn: this.interestEnabled,
+      mode: this.mode,
+      shutInInDays: this.shutInInDays(),
+      terminalReason: this.terminalReason,
+      interestPerDay: this.mode === "hard" ? interestDay : 0,
+      interestOn: this.mode === "hard",
       interestToday: this.player.credit.interestPaidToday,
       revenueToday: this.player.revenueToday,
       opexToday: this.player.opexToday,
@@ -2917,6 +2940,7 @@ export class Game {
         strandedDays: [...this.strandedDays.entries()],
         repStage: this.repStage,
         interestBucket: this.interestBucket,
+        terminalDays: this.terminalDays,
       },
     };
   }
@@ -2955,6 +2979,7 @@ export class Game {
     this.strandedDays = new Map(s.priv.strandedDays ?? []);
     this.repStage = s.priv.repStage;
     this.interestBucket = s.priv.interestBucket;
+    this.terminalDays = s.priv.terminalDays ?? 0;
     // Keep the module id counter ahead of any restored ids.
     nextId = Math.max(nextId, s.idCounter ?? 1);
     // Legacy / corrupt save repair (battery caps, truck flags).
@@ -2977,30 +3002,70 @@ export class Game {
     this.pipesDirty = true;
   }
 
-  private tickRepConsequences() {
+  /** Shut-in grace remaining (sim-days) while a hard-mode terminal condition
+   *  is running, else null. Surfaced in the HUD/triage as a countdown. */
+  shutInInDays(): number | null {
+    if (this.mode !== "hard" || !this.terminalReason) return null;
+    return Math.max(0, SHUT_IN_GRACE_DAYS - this.terminalDays);
+  }
+
+  private tickConsequences(dtDays: number) {
     const r = this.player.reputation;
-    if (r <= 0 && !this.gameOver) {
+    // Escalating rep warnings in BOTH modes (repStage debounces the band).
+    // In Easy they're informational — the lease can never be shut in.
+    const safe = this.mode === "easy" ? " (Easy: no shut-in, but fines bite)" : "";
+    if (r < 10 && this.repStage > 10) {
+      this.repStage = 10;
+      this.message = `Reputation in freefall${safe}. Stop flaring/spills NOW.`;
+      this.guide = "REP <10: gas lines, clean spills, fix haul routes — recover above 0.";
+    } else if (r < 20 && this.repStage > 20) {
+      this.repStage = 20;
+      this.message = `CRITICAL reputation (<20)${safe} — fines mounting.`;
+      this.guide = "REP CRITICAL: build gas lines/plant, clear stranded tanks.";
+    } else if (r < 30 && this.repStage > 30) {
+      this.repStage = 30;
+      this.message = "Reputation warning (<30) — regulators watching. Flaring/spills hurting.";
+    } else if (r < 45 && this.repStage > 45) {
+      this.repStage = 45;
+      this.message = "Reputation dip (<45) — fines now active. Cut flaring & spills.";
+    } else if (r >= 45 && this.repStage < 45) {
+      this.repStage = Math.min(72, Math.floor(r));
+    }
+
+    // Terminal (loss) conditions — HARD MODE ONLY, with a grace countdown.
+    if (this.mode !== "hard") {
+      this.terminalDays = 0;
+      this.terminalReason = "";
+      return;
+    }
+    const bankrupt =
+      this.player.credit.debt >= this.player.credit.limit - 1 &&
+      this.player.cash < 0;
+    const repDead = r <= 0;
+    if (!repDead && !bankrupt) {
+      this.terminalDays = 0;
+      this.terminalReason = "";
+      return;
+    }
+    this.terminalReason = repDead ? "reputation" : "bankruptcy";
+    this.terminalDays += dtDays;
+    const left = Math.ceil(Math.max(0, SHUT_IN_GRACE_DAYS - this.terminalDays));
+    this.message = repDead
+      ? `SHUT-IN IN ~${left}d — reputation at 0. Sell gas / stop flaring to recover.`
+      : `INSOLVENCY IN ~${left}d — facility maxed & cash negative. Sell 75% / pay debt.`;
+    this.guide = repDead
+      ? "GET REPUTATION ABOVE 0 or the lease is shut in."
+      : "CLEAR THE OVERDRAFT (Sell 75%, cut opex) or the bank calls the loan.";
+    if (this.terminalDays >= SHUT_IN_GRACE_DAYS && !this.gameOver) {
       this.gameOver = true;
-      this.gameOverReason =
-        "Reputation hit 0 — regulators shut in the lease. Flaring, spills, and unpaid fines closed you down.";
+      this.gameOverReason = repDead
+        ? "Reputation hit 0 — regulators shut in the lease. Flaring, spills, and unpaid fines closed you down."
+        : "Insolvent — the facility stayed maxed with negative cash. The bank called the loan and shut in the lease.";
       this.message = this.gameOverReason;
       this.guide = "GAME OVER — hit Reset Lease to try again.";
       for (const w of this.wells) {
         if (w.status === "producing") w.status = "shut_in";
       }
-      return;
-    }
-    if (r < 25 && this.repStage > 25) {
-      this.repStage = 25;
-      this.message =
-        "CRITICAL REP — shut-in order imminent. Stop flaring (gas lines) and clear stranded tanks.";
-      this.guide =
-        "REP CRITICAL (<25): build gas lines, fix haul routes, avoid spills — or face shutdown at 0.";
-    } else if (r < 45 && this.repStage > 45) {
-      this.repStage = 45;
-      this.message = "Rep warning — fines active below 45. Flaring and spills are eating you.";
-    } else if (r >= 45 && this.repStage < 45) {
-      this.repStage = Math.min(72, Math.floor(r));
     }
   }
 
@@ -3027,9 +3092,8 @@ export class Game {
       this.weather = tickWeather(this.weather, dtHours);
       this.market = tickMarket(this.market, dtDays);
 
-      const interest = this.interestEnabled
-        ? accrueInterest(this.player, dtDays)
-        : 0;
+      const interest =
+        this.mode === "hard" ? accrueInterest(this.player, dtDays) : 0;
       this.interestBucket += interest;
       if (this.interestBucket >= 500) {
         this.ledger.push(
@@ -3056,7 +3120,7 @@ export class Game {
         }
       }
 
-      this.tickRepConsequences();
+      this.tickConsequences(dtDays);
       if (this.gameOver) return;
 
       // Weather: storms slow trucks; lightning pauses drilling

@@ -59,7 +59,7 @@ app.innerHTML = `
       </div>
     </div>
     <div class="hud-actions">
-      <button type="button" class="tool-btn" id="btn-hard" title="Hard mode: debt interest accrues (~11% APR)">Hard: off</button>
+      <button type="button" class="tool-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
       <select id="profile-select" class="profile-select" title="Save profile"></select>
       <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
       <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
@@ -564,7 +564,7 @@ function saveGame() {
         v: SAVE_VERSION,
         cam,
         spd: currentSpeed,
-        intOn: game.interestEnabled,
+        mode: game.mode,
         game: game.serialize(),
       }),
     );
@@ -600,7 +600,9 @@ function loadGame(): boolean {
     }
     // Restore speed, but never load into a frozen (paused) sim.
     if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
-    if (typeof snap.intOn === "boolean") game.interestEnabled = snap.intOn;
+    // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
+    if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
+    else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
     return true;
   } catch {
     return false;
@@ -802,11 +804,11 @@ document.querySelector("#ops-wrap")!.addEventListener("click", () => {
   inspectBody.textContent = game.opsReason;
 });
 document.querySelector("#btn-hard")!.addEventListener("click", () => {
-  game.interestEnabled = !game.interestEnabled;
+  game.mode = game.mode === "hard" ? "easy" : "hard";
   flash(
-    game.interestEnabled
-      ? "Hard mode ON — debt interest accrues."
-      : "Hard mode OFF — no interest.",
+    game.mode === "hard"
+      ? "HARD mode — debt interest accrues; lease shuts in on rep 0 or insolvency."
+      : "EASY mode — no interest; the lease can never be shut in.",
   );
   saveGame();
   syncHud();
@@ -1408,6 +1410,11 @@ function openContextMenu(
   });
 
   contextMenu.innerHTML = "";
+  // State-specific header — the "second-button tooltip" for whatever's selected.
+  const head = document.createElement("div");
+  head.className = "ctx-head";
+  head.textContent = game.inspectAt(tile.x, tile.y);
+  contextMenu.appendChild(head);
   for (const it of items) {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -1447,8 +1454,8 @@ function syncHud() {
     ? `$${money(d.interestPerDay)}`
     : "off";
   const hardBtn = document.querySelector("#btn-hard") as HTMLElement;
-  hardBtn.textContent = d.interestOn ? "Hard: ON" : "Hard: off";
-  hardBtn.classList.toggle("active", d.interestOn);
+  hardBtn.textContent = d.mode === "hard" ? "Mode: Hard" : "Mode: Easy";
+  hardBtn.classList.toggle("active", d.mode === "hard");
   const repEl = document.querySelector("#stat-rep") as HTMLElement;
   repEl.textContent = game.player.reputation.toFixed(0);
   repEl.style.color =

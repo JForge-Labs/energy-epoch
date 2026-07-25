@@ -28,6 +28,7 @@ html,
 body {
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none; /* no rubber-band scroll on iPad */
   background: var(--bg-deep);
   color: var(--text);
   font-family: var(--font-mono);
@@ -97,6 +98,9 @@ body {
 .stage-wrap {
   position: relative;
   min-height: 0;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   background:
     radial-gradient(ellipse at 30% 20%, #1c241c 0%, transparent 50%),
     radial-gradient(ellipse at 80% 70%, #1a1810 0%, transparent 45%),
@@ -109,6 +113,12 @@ body {
   height: 100%;
   cursor: crosshair;
   touch-action: none;
+  /* iPad/iOS: kill the native long-press callout ("Look Up / Search / Share")
+     and whole-map text-selection so the game's own long-press action menu wins. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
 }
 
 .hover-tip {
@@ -907,6 +917,16 @@ body {
   border-radius: 3px;
   overflow: hidden;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-head {
+  padding: 0.4rem 0.7rem;
+  max-width: 16rem;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--amber);
 }
 
 .ctx-item {
