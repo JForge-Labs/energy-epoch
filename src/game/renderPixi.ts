@@ -312,7 +312,7 @@ export class PixiRenderer {
     this.drawWells(game, ts, showLabels);
     this.syncUnits(game, ts, showLabels);
     this.syncFx(game, ts, now);
-    this.drawHover(hover, ts);
+    this.drawHover(game, hover, ts, showLabels);
     this.drawWeather(game);
     if (showLabels) this.sweepLabels();
 
@@ -829,14 +829,34 @@ export class PixiRenderer {
 
   // --------------------------------------------------------------- overlays
 
-  private drawHover(hover: { x: number; y: number } | null, ts: number): void {
+  private drawHover(
+    game: Game,
+    hover: { x: number; y: number } | null,
+    ts: number,
+    showLabels: boolean,
+  ): void {
     const g = this.gOverlays;
     g.clear();
-    if (!hover) return;
-    g.rect(hover.x * ts + 1, hover.y * ts + 1, ts - 2, ts - 2).stroke({
-      width: 2,
-      color: P.select,
+    // Drill queue: numbered target markers, worked through in order.
+    game.drillQueue.forEach((q, i) => {
+      g.rect(q.x * ts + 2, q.y * ts + 2, ts - 4, ts - 4).stroke({ width: 2, color: P.rig });
+      if (showLabels) {
+        this.setLabel(
+          `dq:${i}`,
+          `${i + 1}`,
+          q.x * ts + ts * 0.6,
+          q.y * ts + ts * 0.08,
+          ts * 0.3,
+          P.rig,
+        );
+      }
     });
+    if (hover) {
+      g.rect(hover.x * ts + 1, hover.y * ts + 1, ts - 2, ts - 2).stroke({
+        width: 2,
+        color: P.select,
+      });
+    }
   }
 
   private drawWeather(game: Game): void {

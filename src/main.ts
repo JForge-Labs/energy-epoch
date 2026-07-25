@@ -76,7 +76,7 @@ app.innerHTML = `
       <div class="inspect-legend">Survey: <span class="leg-s">S sweet</span> <span class="leg-g">G good</span> <span class="leg-f">F fair</span> <span class="leg-l">L lean</span> <span class="leg-x">X barren</span> · Roads need N/E/S/W edges</div>
     </div>
     <div class="triage-panel" id="triage-panel" data-level="ok">
-      <div class="triage-title"><span class="triage-dot"></span>Next bottleneck</div>
+      <div class="triage-title"><span class="triage-dot"></span><span class="triage-label">Next bottleneck</span></div>
       <div class="triage-msg" id="triage-msg">—</div>
     </div>
     <div class="fleet-panel" id="fleet-panel">
@@ -730,7 +730,7 @@ document.querySelectorAll(".spd-btn").forEach((btn) => {
 
 // --- Collapsible panels (maximize map view) ---
 const UI_KEY = "energy-epoch-ui";
-type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean; fleet?: boolean };
+type UiState = { inspect?: boolean; dash?: boolean; ledger?: boolean; fleet?: boolean; triage?: boolean };
 function loadUi(): UiState {
   try {
     return JSON.parse(localStorage.getItem(UI_KEY) || "{}");
@@ -773,6 +773,16 @@ for (const p of PANELS) {
   title?.addEventListener("click", () => {
     uiState[p.key] = !(uiState[p.key] ?? false);
     applyPanel(p.sel, !!uiState[p.key]);
+    saveUi();
+  });
+}
+// Triage collapses to just its status dot (its own title, so it's wired here).
+{
+  const tTitle = document.querySelector<HTMLElement>("#triage-panel .triage-title");
+  applyPanel("#triage-panel", !!uiState.triage);
+  tTitle?.addEventListener("click", () => {
+    uiState.triage = !uiState.triage;
+    applyPanel("#triage-panel", !!uiState.triage);
     saveUi();
   });
 }
@@ -969,18 +979,11 @@ function handleTileClick(tile: { x: number; y: number }) {
   }
 
   if (tool === "drill") {
-    const zone = game.tiles[tile.y][tile.x].subsurface.zone;
-    if (
-      !askConfirm(
-        "drill",
-        `Move rig & drill at ${tile.x},${tile.y} — AFE ~$${money(DRILL_COST[zone])} (zone ${zone}).`,
-      )
-    ) {
-      return;
-    }
-    game.moveAndDrill(tile.x, tile.y);
+    // Queue the target (up to 6). The rig works the queue automatically:
+    // move → spud → next. Clicking a queued tile again removes it. The tool
+    // stays armed so you can line up several; AFE is charged as each spuds.
+    game.queueDrill(tile.x, tile.y);
     flash(game.message);
-    disarmToSelect();
     syncAll();
     return;
   }
@@ -1353,8 +1356,8 @@ function openContextMenu(
   const drillable = !tt.drilled && (tt.terrain === "ground" || tt.terrain === "scrub");
   if (drillable) {
     items.push({
-      label: `Drill here (AFE ${k(DRILL_COST[tt.subsurface.zone])})`,
-      act: () => game.moveAndDrill(tile.x, tile.y),
+      label: `Queue drill (AFE ${k(DRILL_COST[tt.subsurface.zone])})`,
+      act: () => game.queueDrill(tile.x, tile.y),
     });
   }
   const theRig = game.selectedRig();

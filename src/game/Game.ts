@@ -182,6 +182,8 @@ export class Game {
   interestEnabled = false;
   /** Move-and-drill: rig target to auto-spud on arrival. */
   private pendingDrillAt: { x: number; y: number } | null = null;
+  /** Up to 6 pending drill targets the rig works through automatically. */
+  drillQueue: { x: number; y: number }[] = [];
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -1010,8 +1012,8 @@ export class Game {
     return true;
   }
 
-  sendRigTo(x: number, y: number): boolean {
-    const rig = this.selectedRig();
+  sendRigTo(x: number, y: number, rigArg?: Unit): boolean {
+    const rig = rigArg ?? this.selectedRig();
     if (!rig || rig.busy) {
       this.message = "Rig is busy drilling.";
       return false;
@@ -1065,6 +1067,90 @@ export class Game {
     this.pendingDrillAt = { x, y };
     this.message = `Rig rolling to ${x},${y} to drill.`;
     return true;
+  }
+
+  /**
+   * Queue a drill target (up to 6). Clicking an already-queued tile removes it
+   * (easy cancel). The rig works the queue automatically: move → spud → next.
+   * When the rig is idle, the first queued target kicks off immediately.
+   */
+  queueDrill(x: number, y: number): boolean {
+    const at = this.drillQueue.findIndex((q) => q.x === x && q.y === y);
+    if (at >= 0) {
+      this.drillQueue.splice(at, 1);
+      this.message = `Removed ${x},${y} from queue (${this.drillQueue.length} left).`;
+      return true;
+    }
+    const rig = this.selectedRig();
+    if (!rig) {
+      this.message = "No rig on the lease.";
+      return false;
+    }
+    const tile = this.tiles[y]?.[x];
+    if (!tile) return false;
+    if (tile.drilled) {
+      this.message = "Already drilled here.";
+      return false;
+    }
+    if (!isOpen(tile.terrain)) {
+      this.message = `Can't drill on ${terrainLabel(tile.terrain)}.`;
+      return false;
+    }
+    const zone = tile.subsurface.zone;
+    if (zone > rig.tier || zone > this.player.drillTech) {
+      this.message = `Zone ${zone} needs rig/tech tier ${zone} — upgrade the rig.`;
+      return false;
+    }
+    if (this.drillQueue.length >= 6) {
+      this.message = "Drill queue is full (6). Cancel one first.";
+      return false;
+    }
+    this.drillQueue.push({ x, y });
+    this.message = `Queued drill ${x},${y} (${this.drillQueue.length} in queue).`;
+    // Idle rig with nothing pending → start working the queue now.
+    if (!rig.busy && rig.path.length === 0 && !this.pendingDrillAt) {
+      this.advanceDrillQueue(rig);
+    }
+    return true;
+  }
+
+  /** Send the rig to the next queued target (spud on arrival), or — if the
+   *  queue is empty — reposition to the nearest empty drill site. */
+  private advanceDrillQueue(rig: Unit) {
+    const next = this.drillQueue.shift();
+    if (next) {
+      if (this.sendRigTo(next.x, next.y, rig)) {
+        this.pendingDrillAt = { x: next.x, y: next.y };
+        this.message = `Rig rolling to drill ${next.x},${next.y} (${this.drillQueue.length} more queued).`;
+      }
+      return;
+    }
+    const site = this.nearestEmptyDrillSite(rig);
+    if (site) this.sendRigTo(site.x, site.y, rig);
+  }
+
+  /** Nearest open, undrilled, tier-drillable tile — surveyed spots preferred. */
+  private nearestEmptyDrillSite(rig: Unit): { x: number; y: number } | null {
+    const tier = Math.max(rig.tier, this.player.drillTech);
+    const rx = Math.round(rig.x);
+    const ry = Math.round(rig.y);
+    let best: { x: number; y: number } | null = null;
+    let bestScore = -Infinity;
+    for (let y = 0; y < this.config.rows; y++) {
+      for (let x = 0; x < this.config.cols; x++) {
+        const t = this.tiles[y][x];
+        if (t.drilled || !isOpen(t.terrain) || t.subsurface.zone > tier) continue;
+        if (this.buildingAt(x, y)) continue;
+        const d = Math.abs(x - rx) + Math.abs(y - ry);
+        if (d === 0) continue;
+        const score = (t.surveyed ? 100000 : 0) - d;
+        if (score > bestScore) {
+          bestScore = score;
+          best = { x, y };
+        }
+      }
+    }
+    return best;
   }
 
   startDrill(): boolean {
@@ -1143,7 +1229,6 @@ export class Game {
 
     rig.busy = false;
     rig.targetWellId = null;
-    this.nudgeRigOffHole(rig, well.x, well.y);
 
     if (!hit) {
       well.status = "duster";
@@ -1151,6 +1236,9 @@ export class Game {
         ? `Survey said ${prospectLabel(prospectGrade(prospect))} — dry anyway.`
         : "Wildcat duster (unsurveyed).";
       this.message = `Duster at ${well.x},${well.y}. ${why}`;
+      // Nudge off the dry hole and roll to the next queued target (or a site).
+      this.nudgeRigOffHole(rig, well.x, well.y);
+      this.advanceDrillQueue(rig);
       return;
     }
 
@@ -1252,6 +1340,10 @@ export class Game {
     });
 
     this.message = `Ripper! ${well.oilRate.toFixed(0)} bopd · ${well.gasRate.toFixed(0)} mcf/d. Tank filling — truck will haul to battery.`;
+    // Move the rig off the hole AFTER the tank exists, so it can't land on it,
+    // then roll to the next queued target (or the nearest empty drill site).
+    this.nudgeRigOffHole(rig, well.x, well.y);
+    this.advanceDrillQueue(rig);
   }
 
   buyExploration(cx: number, cy: number): boolean {
@@ -2976,7 +3068,10 @@ export class Game {
         if (rig && !rig.busy && rig.path.length === 0) {
           const { x, y } = this.pendingDrillAt;
           this.pendingDrillAt = null;
-          if (Math.round(rig.x) === x && Math.round(rig.y) === y) this.startDrill();
+          const spudded =
+            Math.round(rig.x) === x && Math.round(rig.y) === y && this.startDrill();
+          // Couldn't reach or couldn't spud (cash/zone) → don't stall; move on.
+          if (!spudded) this.advanceDrillQueue(rig);
         }
       }
 

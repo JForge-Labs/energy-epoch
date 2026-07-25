@@ -312,6 +312,28 @@ body {
   min-width: 6.5rem;
 }
 
+/* Triage collapses to just its coloured status dot (it keeps its own title,
+   which the generic rule above would otherwise hide). */
+.triage-panel .triage-title {
+  cursor: pointer;
+}
+.triage-panel.panel-collapsed {
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+}
+.triage-panel.panel-collapsed > .triage-title {
+  display: flex;
+  margin-bottom: 0;
+}
+.triage-panel.panel-collapsed .triage-label {
+  display: none;
+}
+.triage-panel.panel-collapsed .triage-title::after {
+  content: "▸";
+  color: var(--steel-dim);
+  font-size: 0.7rem;
+}
+
 .inspect-legend {
   margin-top: 0.45rem;
   padding-top: 0.4rem;

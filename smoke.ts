@@ -658,6 +658,42 @@ console.log("flare flame syncs to gas takeaway");
   check("gas takeaway pulls the flare down", flare.online === false);
 }
 
+console.log("drill queue (add / toggle-cancel / cap at 6)");
+{
+  const gq = new Game();
+  const rig = gq.units.find((u) => u.kind === "drill_rig")!;
+  rig.busy = true; // hold the rig so queueing doesn't auto-execute the first
+  const rx = Math.round(rig.x);
+  const ry = Math.round(rig.y);
+  const spots: { x: number; y: number }[] = [];
+  for (let rad = 1; rad < 16 && spots.length < 7; rad++) {
+    for (let dy = -rad; dy <= rad && spots.length < 7; dy++)
+      for (let dx = -rad; dx <= rad && spots.length < 7; dx++) {
+        const x = rx + dx;
+        const y = ry + dy;
+        if (x < 0 || y < 0 || x >= gq.config.cols || y >= gq.config.rows) continue;
+        const t = gq.tiles[y][x];
+        if (
+          !t.drilled &&
+          (t.terrain === "ground" || t.terrain === "scrub") &&
+          t.subsurface.zone === 0 &&
+          !gq.buildingAt(x, y) &&
+          !(x === rx && y === ry) &&
+          !spots.some((s) => s.x === x && s.y === y)
+        ) {
+          spots.push({ x, y });
+        }
+      }
+  }
+  check("found enough queue spots", spots.length >= 7);
+  for (const s of spots.slice(0, 6)) gq.queueDrill(s.x, s.y);
+  check("six drills queued", gq.drillQueue.length === 6);
+  check("7th is refused (cap)", !gq.queueDrill(spots[6].x, spots[6].y) && gq.drillQueue.length === 6);
+  // Toggling a queued tile cancels it.
+  gq.queueDrill(spots[0].x, spots[0].y);
+  check("toggle cancels a queued drill", gq.drillQueue.length === 5);
+}
+
 console.log("save round-trip");
 const snap = JSON.parse(JSON.stringify(g.serialize()));
 const g2 = new Game();

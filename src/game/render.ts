@@ -659,6 +659,35 @@ export function renderGame(
     drawUnit(ctx, u, sx, sy, size, u.id === game.selectedUnitId);
   }
 
+  // Drill queue: numbered target markers the rig will work through in order.
+  game.drillQueue.forEach((q, i) => {
+    const { sx, sy, size } = worldToScreen(
+      cam,
+      ctx.canvas.width,
+      ctx.canvas.height,
+      tileSize,
+      q.x,
+      q.y,
+    );
+    ctx.strokeStyle = C.rig;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(sx + 2, sy + 2, size - 4, size - 4);
+    ctx.setLineDash([]);
+    const r = Math.max(6, size * 0.2);
+    ctx.fillStyle = "rgba(20,22,16,0.85)";
+    ctx.beginPath();
+    ctx.arc(sx + size - r - 2, sy + r + 2, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = C.rig;
+    ctx.font = `bold ${Math.max(9, Math.floor(size * 0.28))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${i + 1}`, sx + size - r - 2, sy + r + 2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  });
+
   if (hover) {
     const { sx, sy, size } = worldToScreen(
       cam,
