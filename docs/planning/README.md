@@ -9,7 +9,8 @@
 | [PATH_W_DEPLOY.md](./PATH_W_DEPLOY.md) | Active path: web → PWA → Capacitor → stores |
 | [PATH_U_ROADMAP.md](./PATH_U_ROADMAP.md) | Future path: Unity 6.5 port criteria + order |
 | [CHECKLIST.md](./CHECKLIST.md) | Milestones and status |
-| [GRAPHICS_PASS.md](./GRAPHICS_PASS.md) | Visual quality one-pass plan (Pixi + atlas) — **plan only until greenlit** |
+| [GRAPHICS_PASS.md](./GRAPHICS_PASS.md) | Visual quality one-pass plan (Pixi + atlas) |
+| [IOS_APP_STORE.md](./IOS_APP_STORE.md) | **Active:** Capacitor → TestFlight → App Store ($99/yr Apple) |
 | [../../DESIGN.md](../../DESIGN.md) | Game design (gameplay source of truth) |
 
 ## One-liner for agents

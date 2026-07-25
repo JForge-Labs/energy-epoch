@@ -15,6 +15,18 @@ dist-ssr
 # Smoke-test bundle output (source is smoke.ts, run via `npm test`)
 smoke.mjs
 
+# Cloudflare / Wrangler local state
+.wrangler
+.dev.vars
+
+# Capacitor / Xcode (commit ios/ sources; ignore build products)
+ios/App/Pods
+ios/App/build
+ios/DerivedData
+ios/App/App.xcworkspace/xcuserdata
+ios/App/App.xcodeproj/xcuserdata
+*.xcuserstate
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

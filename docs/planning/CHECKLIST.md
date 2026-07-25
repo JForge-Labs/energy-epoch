@@ -23,8 +23,12 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | S3 | Phone playtest on deployed URL | done | playenergyepoch.com |
 | S4 | PWA install + offline session | todo | |
 | S5 | Save export/import JSON | todo | Before stores |
-| S6 | Capacitor Android APK | todo | |
-| S7 | iOS TestFlight | todo | Needs Apple + Mac |
+| S6 | Capacitor Android APK | todo | After or parallel with iOS |
+| S7 | iOS App Store (Capacitor) | doing | See IOS_APP_STORE.md; $99/yr approved |
+| S7a | Apple Developer enroll + Mac/Xcode | todo | Human |
+| S7b | Capacitor iOS scaffold | todo | After polish gates |
+| S7c | TestFlight internal | todo | |
+| S7d | App Store submission | todo | |
 | S8 | Custom domain | done | playenergyepoch.com on Cloudflare |
 
 ## Path U — only after trigger
@@ -51,3 +55,4 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-24 | Graphics scaffold: branch `graphics/pixi-atlas-v1` pushed (Pixi default, atlas stub); Railway still on `cleanup/qa-fixes` |
 | 2026-07-24 | Cloudflare Worker primary host: playenergyepoch.com |
 | 2026-07-24 | Railway project `steadfast-determination` decommissioned; removed railway.toml + serve; docs point at Cloudflare |
+| 2026-07-25 | iOS App Store planning active: Capacitor path, Apple $99/yr approved; see IOS_APP_STORE.md |

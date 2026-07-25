@@ -87,14 +87,20 @@ Deploy: `npm run build && npx wrangler deploy` (or GitHub Actions).
 
 ---
 
-## Phase D — iOS (later)
+## Phase D — iOS App Store (**active planning**)
+
+Full plan: **[IOS_APP_STORE.md](./IOS_APP_STORE.md)**
 
 | Item | Detail |
 |------|--------|
-| Tool | Capacitor iOS project |
-| Requirements | Apple Developer **$99/yr**, Mac + Xcode |
-| Ladder | TestFlight → free App Store listing |
+| Tool | Capacitor iOS project wraps `dist/` |
+| Requirements | Apple Developer **$99/yr** (approved), Mac + Xcode |
+| Ladder | Scaffold → TestFlight → free App Store listing |
+| Web host | Remains Cloudflare; Store app is offline-capable local assets |
 
 ### D acceptance
 
+- [ ] Capacitor iOS runs on simulator  
 - [ ] TestFlight build runs on a physical iPhone  
+- [ ] App Store metadata + privacy policy live  
+- [ ] Submitted / Ready for Sale

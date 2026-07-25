@@ -1,6 +1,6 @@
 # Decision lock
 
-Last updated: 2026-07-23  
+Last updated: 2026-07-25  
 Status: **LOCKED** unless user overrides in writing.
 
 ## Engine
@@ -29,9 +29,10 @@ Status: **LOCKED** unless user overrides in writing.
 |------|----------------|
 | Mobile immediately | Static URL (GitHub Pages / equivalent) |
 | Download, run locally, no hosted compute | Static assets + PWA offline; later Capacitor packages `dist/` |
-| Free now | GH Pages / Cloudflare Pages + PWA = $0 |
-| Cheap later | Apple Developer $99/yr only when App Store; optional Play $25 once |
-| iOS eventually | Capacitor → Xcode first; Unity only if Path U triggers |
+| Free web now | Cloudflare Worker: https://playenergyepoch.com |
+| App Store iOS | **In planning** — Capacitor → TestFlight → Store; Apple **$99/yr** approved |
+| Optional Play later | Capacitor Android; ~$25 one-time |
+| iOS engine | Capacitor web shell (not Unity) unless Path U triggers |
 
 ## Non-goals (do not do without user OK)
 

@@ -124,18 +124,37 @@ export default {
       const host = (req.headers.get("host") ?? url.hostname).toLowerCase();
       const isApp = host.startsWith("app.");
       if (!isApp) {
-        // Landing domain: return the marketing page for any navigation; let its
-        // own assets (favicon, etc.) pass through to the static bucket. Fetch
-        // the EXTENSIONLESS /landing (Cloudflare Assets 307-redirects .html to
-        // its extensionless form), and serve it no-store so the apex root can
-        // never get pinned to a stale cached game index at the edge.
+        // Landing domain: marketing page for most navigations; allow real static
+        // HTML (privacy, etc.) through to ASSETS. Prefer Host header (correct
+        // under wrangler dev too). Extensionless /landing is the marketing root.
         const accept = req.headers.get("accept") ?? "";
         if (req.method === "GET" && accept.includes("text/html")) {
-          const page = await env.ASSETS.fetch(new Request(new URL("/landing", url).toString()));
-          return new Response(page.body, {
-            status: page.status,
-            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-          });
+          const path = url.pathname.replace(/\/$/, "") || "/";
+          if (path === "/privacy" || path === "/privacy.html") {
+            const page = await env.ASSETS.fetch(
+              new Request(new URL("/privacy.html", url).toString()),
+            );
+            return new Response(page.body, {
+              status: page.status,
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+              },
+            });
+          }
+          if (path === "/" || path === "/landing" || path === "/landing.html") {
+            const page = await env.ASSETS.fetch(
+              new Request(new URL("/landing", url).toString()),
+            );
+            return new Response(page.body, {
+              status: page.status,
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+              },
+            });
+          }
+          // Other HTML paths: try ASSETS first (static pages), else landing.
         }
       }
       return env.ASSETS.fetch(req);
