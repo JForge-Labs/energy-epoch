@@ -33,6 +33,7 @@ import {
   GAS_LINE_COST,
   GAS_PIPE_COST,
   GAS_PLANT_COST,
+  GAS_PLANT_MCFD,
   GAS_PLANT_PREMIUM,
   hitChance,
   hitChancePercent,
@@ -1333,6 +1334,11 @@ export class Game {
       this.message = "Click closer to a producing well to run its gas line.";
       return false;
     }
+    // One takeaway per wellhead — don't stack redundant gas lines.
+    if (this.wellHasGasLine(well)) {
+      this.message = "That wellhead already has a gas line — one takeaway per well.";
+      return false;
+    }
 
     // Pick the open tile within 2 of the well that's nearest the click. A
     // truck passing through doesn't count — only real structures block.
@@ -2326,6 +2332,44 @@ export class Game {
     }
   }
 
+  /** Total gas a player's plants can process per day — stacks per online plant. */
+  gasPlantCapMcfd(): number {
+    return (
+      this.buildings.filter((b) => b.kind === "gas_plant" && b.online).length *
+      GAS_PLANT_MCFD
+    );
+  }
+
+  /** A gas line (online) sits within 2 tiles of the well — matches production. */
+  private wellHasGasLine(well: Well): boolean {
+    return this.buildings.some(
+      (b) =>
+        b.kind === "gas_line" &&
+        b.online &&
+        Math.abs(b.x - well.x) + Math.abs(b.y - well.y) <= 2,
+    );
+  }
+
+  /**
+   * Keep each well's flare flame honest: lit ONLY when the well is producing
+   * gas with no takeaway. Any gas pipe (to a plant) OR gas line at the wellhead
+   * pulls the flame down — so a connected wellhead stops flaring (and stops the
+   * rep bleed), instead of the flame lingering or flickering back on.
+   */
+  private syncFlares() {
+    for (const b of this.buildings) {
+      if (b.kind !== "gas_flare") continue;
+      const well = b.wellId ? this.wells.find((w) => w.id === b.wellId) : undefined;
+      b.online =
+        !!well &&
+        well.status === "producing" &&
+        !well.choked &&
+        well.gasRate > 0.5 &&
+        !this.gasSinkForWell(well) &&
+        !this.wellHasGasLine(well);
+    }
+  }
+
   /** A well sells to a gas plant if a plant-connected gas-pipe tile touches it. */
   gasSinkForWell(well: Well): boolean {
     if (!this.gasConnectedTiles.size) return false;
@@ -2739,6 +2783,7 @@ export class Game {
       refineries: refineries.length,
       oilPiped: this.oilConnected,
       gasPlants: this.buildings.filter((b) => b.kind === "gas_plant").length,
+      gasPlantCap: this.gasPlantCapMcfd(),
     };
   }
 
@@ -2950,6 +2995,7 @@ export class Game {
         this.recomputePipes();
         this.pipesDirty = false;
       }
+      this.syncFlares();
 
       const wxFactor =
         this.weather.kind === "storm" ? 1 - this.weather.intensity * 0.35 : 1;
@@ -2961,6 +3007,7 @@ export class Game {
         dtDays * wxFactor,
         (well) => this.gasSinkForWell(well),
         GAS_PLANT_PREMIUM,
+        this.gasPlantCapMcfd(),
       );
       this.totalGasSold += prod.gasSold;
       this.totalSpilled += prod.spilled;

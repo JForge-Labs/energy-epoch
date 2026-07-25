@@ -476,6 +476,7 @@ export class PixiRenderer {
     ts: number,
     kind: "oilPipe" | "gasPipe",
     now: number,
+    snappedWells: Set<string>,
   ): void {
     const tile = game.tiles[y][x];
     if (!tile[kind]) return;
@@ -498,7 +499,7 @@ export class PixiRenderer {
     const dirs: [number, number][] = [];
     for (const [dx, dy] of N4) {
       const nb = game.tiles[y + dy]?.[x + dx];
-      if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind)) {
+      if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind, snappedWells)) {
         dirs.push([dx, dy]);
       }
     }
@@ -532,10 +533,12 @@ export class PixiRenderer {
   ): void {
     const g = this.gInfra;
     g.clear();
+    // One gas snap per wellhead across the frame (shared by all pipe tiles).
+    const snappedWells = new Set<string>();
     for (let y = bounds.minY; y <= bounds.maxY; y++) {
       for (let x = bounds.minX; x <= bounds.maxX; x++) {
-        this.drawPipeTile(game, x, y, ts, "oilPipe", now);
-        this.drawPipeTile(game, x, y, ts, "gasPipe", now);
+        this.drawPipeTile(game, x, y, ts, "oilPipe", now, snappedWells);
+        this.drawPipeTile(game, x, y, ts, "gasPipe", now, snappedWells);
       }
     }
     const s = this.gSpills;

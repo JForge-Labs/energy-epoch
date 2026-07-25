@@ -63,6 +63,12 @@ export const CRUDE_PIPE_FLOW_BPD = 900;
 /** Gas plant — premium piped-gas buyer (vs the cheap flare-stopping gas line). */
 export const GAS_PLANT_COST = 300_000;
 export const GAS_PLANT_PREMIUM = 1.6;
+/**
+ * Gas a single plant can process per day (mcf). Capacity STACKS — each online
+ * plant adds this much, so a second plant genuinely doubles premium throughput.
+ * Gas beyond total plant capacity spills to a gas line (base price) or flares.
+ */
+export const GAS_PLANT_MCFD = 600;
 
 /** Additional built facilities (beyond the financed starters). */
 /** A tank battery is a quarter of the gas plant's cost. */

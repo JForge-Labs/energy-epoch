@@ -1,6 +1,12 @@
 /* Headless smoke test — bundled with esbuild, run in Node. Not shipped. */
 import { Game } from "./src/game/Game";
-import { CRUDE_PIPE_FLOW_BPD, WELLHEAD_CAP_BBL } from "./src/game/data/economy";
+import {
+  CRUDE_PIPE_FLOW_BPD,
+  GAS_PLANT_MCFD,
+  GAS_PLANT_PREMIUM,
+  WELLHEAD_CAP_BBL,
+} from "./src/game/data/economy";
+import { simulateProduction } from "./src/game/systems/production";
 import { blocksBuild } from "./src/game/systems/terrain";
 import type { Building, Well } from "./src/game/types";
 
@@ -547,6 +553,109 @@ console.log("storm-damaged battery auto-repairs (no permanent treat deadlock)");
   check("battery auto-repairs back online", recovered);
   for (let i = 0; i < 20; i++) g10.update(0.2);
   check("treating resumes after repair (crude drains, clean produced)", b10.crude < crudeAtRepair && b10.clean > 0);
+}
+
+console.log("gas plant capacity stacks with plant count");
+{
+  const freshWell = (): Well => ({
+    id: "gw",
+    x: 1,
+    y: 1,
+    status: "producing",
+    oilRate: 5,
+    gasRate: 2000, // mcf/day — well above one plant's capacity
+    oilIp: 5,
+    gasIp: 2000,
+    declinePerDay: 0,
+    ageDays: 0,
+    drillProgress: 1,
+    drillDaysNeeded: 1,
+    wellheadTankId: null,
+    pumpjackId: null,
+  });
+  // One plant caps premium sales at its capacity; the rest flares.
+  const r1 = simulateProduction(
+    [freshWell()],
+    [],
+    new Game().player,
+    3.0,
+    1,
+    () => true,
+    GAS_PLANT_PREMIUM,
+    GAS_PLANT_MCFD,
+  );
+  // Two plants double the capacity → double the gas sold.
+  const r2 = simulateProduction(
+    [freshWell()],
+    [],
+    new Game().player,
+    3.0,
+    1,
+    () => true,
+    GAS_PLANT_PREMIUM,
+    GAS_PLANT_MCFD * 2,
+  );
+  check("one plant caps gas ≈ its capacity", Math.abs(r1.gasSold - GAS_PLANT_MCFD) < 2);
+  check("two plants ~double gas throughput", r2.gasSold > r1.gasSold * 1.9);
+  check("gas over plant capacity flares", r1.gasFlared > 100);
+}
+
+console.log("flare flame syncs to gas takeaway");
+{
+  const gf = new Game();
+  const well: Well = {
+    id: "fw",
+    x: 20,
+    y: 20,
+    status: "producing",
+    oilRate: 5,
+    gasRate: 100,
+    oilIp: 5,
+    gasIp: 100,
+    declinePerDay: 0,
+    ageDays: 0,
+    drillProgress: 1,
+    drillDaysNeeded: 1,
+    wellheadTankId: null,
+    pumpjackId: null,
+  };
+  gf.wells.push(well);
+  const flare: Building = {
+    id: "ff",
+    kind: "gas_flare",
+    x: 20,
+    y: 20,
+    oil: 0,
+    oilCap: 0,
+    crude: 0,
+    crudeCap: 0,
+    clean: 0,
+    cleanCap: 0,
+    wellId: "fw",
+    online: true,
+    hp: 50,
+  };
+  gf.buildings.push(flare);
+  gf.update(0.2);
+  check("flare lit when the well has no takeaway", flare.online === true);
+  // A gas line within 2 tiles must pull the flame down.
+  gf.buildings.push({
+    id: "gl2",
+    kind: "gas_line",
+    x: 21,
+    y: 20,
+    oil: 0,
+    oilCap: 0,
+    crude: 0,
+    crudeCap: 0,
+    clean: 0,
+    cleanCap: 0,
+    wellId: "fw",
+    online: true,
+    hp: 100,
+  });
+  gf.update(0.2);
+  check("gas takeaway pulls the flare down", flare.online === false);
 }
 
 console.log("save round-trip");

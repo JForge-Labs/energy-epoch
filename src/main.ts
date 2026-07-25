@@ -308,9 +308,18 @@ function updateScada(d: Dash) {
   setMeter(S.salesFill, S.salesVal, salesPct, salesPct >= 99 ? "amber" : "green", `${d.refSlotUsed.toFixed(0)}/${d.refSlotCap}`);
   S.salesPill.textContent = d.oilPiped ? "pipe ✓" : "";
 
-  S.gasLed.dataset.status = d.gasPlants > 0 ? "green" : d.gasMcfd > 0 ? "amber" : "grey";
+  // Gas plant: show throughput vs stacking capacity (each plant adds cap).
+  // Amber when gas exceeds capacity (the surplus flares/gas-lines), green when
+  // within capacity, grey when there's no plant.
+  const gasCap = d.gasPlantCap ?? 0;
+  const overGasCap = d.gasPlants > 0 && d.gasMcfd > gasCap + 1;
+  S.gasLed.dataset.status = d.gasPlants === 0
+    ? (d.gasMcfd > 0 ? "amber" : "grey")
+    : overGasCap
+      ? "amber"
+      : "green";
   S.gasVal.textContent = d.gasPlants
-    ? `${d.gasPlants} plant${d.gasPlants > 1 ? "s" : ""}`
+    ? `${d.gasMcfd.toFixed(0)}/${gasCap} mcf · ${d.gasPlants} plant${d.gasPlants > 1 ? "s" : ""}`
     : d.gasMcfd > 0
       ? "flaring"
       : "—";

@@ -124,6 +124,7 @@ export function pipeSnapsTo(
   nx: number,
   ny: number,
   kind: "oilPipe" | "gasPipe",
+  snappedWells?: Set<string>,
 ): boolean {
   const nb = game.tiles[ny]?.[nx];
   if (!nb) return false;
@@ -137,7 +138,15 @@ export function pipeSnapsTo(
   }
   // Gas pipes tie a wellhead (the gas source) into a plant / gas line.
   if (b?.kind === "gas_plant" || b?.kind === "gas_line") return true;
-  return nb.wellId != null;
+  if (nb.wellId == null) return false;
+  // One gas connection per wellhead — the first adjacent pipe tile claims it,
+  // so a wellhead boxed in by pipe doesn't sprout 3 connection stubs.
+  if (snappedWells) {
+    const key = `${nx},${ny}`;
+    if (snappedWells.has(key)) return false;
+    snappedWells.add(key);
+  }
+  return true;
 }
 
 /**
@@ -156,6 +165,7 @@ function drawPipeTile(
   size: number,
   kind: "oilPipe" | "gasPipe",
   time: number,
+  snappedWells: Set<string>,
 ) {
   const tiles = game.tiles;
   const tile = tiles[y][x];
@@ -185,7 +195,7 @@ function drawPipeTile(
   const dirs: [number, number][] = [];
   for (const [dx, dy] of neighbors) {
     const nb = tiles[y + dy]?.[x + dx];
-    if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind)) {
+    if ((nb && nb[kind]) || pipeSnapsTo(game, x + dx, y + dy, kind, snappedWells)) {
       dirs.push([dx, dy]);
     }
   }
@@ -526,6 +536,8 @@ export function renderGame(
 ) {
   const { cols, rows, tileSize } = game.config;
   const time = performance.now();
+  // One gas snap per wellhead across the whole frame (shared by all pipe tiles).
+  const snappedWells = new Set<string>();
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
   for (let y = 0; y < rows; y++) {
@@ -572,8 +584,8 @@ export function renderGame(
       ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
 
-      drawPipeTile(ctx, game, x, y, px, py, size, "oilPipe", time);
-      drawPipeTile(ctx, game, x, y, px, py, size, "gasPipe", time);
+      drawPipeTile(ctx, game, x, y, px, py, size, "oilPipe", time, snappedWells);
+      drawPipeTile(ctx, game, x, y, px, py, size, "gasPipe", time, snappedWells);
     }
   }
 

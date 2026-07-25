@@ -37,6 +37,7 @@ export function simulateProduction(
   dtDays: number,
   gasPlantConnected: (well: Well) => boolean = () => false,
   gasPlantPremium = 1,
+  gasPlantCapMcfd = 0,
 ): ProdResult {
   const result: ProdResult = {
     oilProduced: 0,
@@ -59,6 +60,10 @@ export function simulateProduction(
     1,
     Math.max(FLARE_MIN_SCALE, producingWells / FLARE_GRACE_WELLS),
   );
+
+  // Shared gas-plant capacity for this tick (total mcf/day × dt). Consumed as
+  // wells sell into it; when it runs out, further gas overflows to gas line/flare.
+  let gasPlantBudget = gasPlantCapMcfd * dtDays;
 
   for (const well of wells) {
     if (well.status !== "producing") continue;
@@ -111,39 +116,49 @@ export function simulateProduction(
       }
     }
 
-    // Associated gas: plant (premium) > gas line (base) > flare (rep bleed).
+    // Associated gas: plant (premium, CAPACITY-CAPPED) > gas line (base) > flare.
+    // The plant budget is shared across wells this tick (numPlants × capacity),
+    // so a second plant genuinely doubles what sells at the premium.
     if (gas > 0.01) {
-      if (gasPlantConnected(well)) {
-        const revenue = gas * gasPrice * gasPlantPremium;
+      let remaining = gas;
+      if (remaining > 0.01 && gasPlantBudget > 0.01 && gasPlantConnected(well)) {
+        const toPlant = Math.min(remaining, gasPlantBudget);
+        const revenue = toPlant * gasPrice * gasPlantPremium;
         player.cash += revenue;
         player.revenueToday += revenue;
         player.reputation = Math.min(
           100,
-          player.reputation + gas * GAS_SALE_REP_PER_MCF,
+          player.reputation + toPlant * GAS_SALE_REP_PER_MCF,
         );
-        result.gasSold += gas;
-      } else if (hasGasLine(well, buildings)) {
-        const revenue = gas * gasPrice;
+        result.gasSold += toPlant;
+        gasPlantBudget -= toPlant;
+        remaining -= toPlant;
+      }
+      // Gas line — cheap flare-stopper at base price; takes the overflow.
+      if (remaining > 0.01 && hasGasLine(well, buildings)) {
+        const revenue = remaining * gasPrice;
         player.cash += revenue;
         player.revenueToday += revenue;
         player.reputation = Math.min(
           100,
-          player.reputation + gas * GAS_SALE_REP_PER_MCF,
+          player.reputation + remaining * GAS_SALE_REP_PER_MCF,
         );
-        result.gasSold += gas;
-      } else {
+        result.gasSold += remaining;
+        remaining = 0;
+      }
+      if (remaining > 0.01) {
         const tankFull = tank && tank.oil >= tank.oilCap - 0.01;
         const flareMul = tankFull ? 2.2 : 1;
-        const repHit = gas * FLARE_REP_PER_MCF * flareMul * flareRepScale;
+        const repHit = remaining * FLARE_REP_PER_MCF * flareMul * flareRepScale;
         player.reputation = Math.max(0, player.reputation - repHit);
-        result.gasFlared += gas;
+        result.gasFlared += remaining;
         if (tankFull && Math.random() < 0.08) {
           result.messages.push(
             `FLARING @ well (${well.x},${well.y}) — tank full, no takeaway. Rep −${repHit.toFixed(2)}. Build gas line or haul crude.`,
           );
         } else if (!tankFull && Math.random() < 0.03) {
           result.messages.push(
-            `Flaring associated gas @ (${well.x},${well.y}) — rep bleeding. Place a gas line.`,
+            `Flaring gas @ (${well.x},${well.y}) — over gas-plant capacity or no takeaway. Add a plant/line.`,
           );
         }
       }
