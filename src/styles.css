@@ -48,19 +48,24 @@ body {
 
 .top-bar {
   display: flex;
-  /* Wrap to multiple lines instead of clipping/overflowing at narrow widths.
-     Row gap is tighter than column gap so wrapped stat rows stay compact. */
-  flex-wrap: wrap;
+  /* Single non-wrapping row so a per-frame stat width change can never toggle a
+     wrap and oscillate the header height (which resizes the 1fr map → jitter).
+     Scrolls horizontally in the rare case it's wider than the viewport. */
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem 1rem;
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: max(0.65rem, env(safe-area-inset-top)) max(1.1rem, env(safe-area-inset-right))
     0.65rem max(1.1rem, env(safe-area-inset-left));
   background: linear-gradient(180deg, #222820 0%, var(--bg-panel) 100%);
   border-bottom: 1px solid var(--bg-panel-edge);
+}
+.top-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .brand {
@@ -79,11 +84,16 @@ body {
 
 .hud-stats {
   display: flex;
-  flex-wrap: wrap;
+  /* One stable row — NEVER wrap on stat updates. syncHud rewrites every value
+     each frame (the oil price ticks constantly); wrapping here would oscillate
+     the top-bar height and jitter the map. tabular-nums keeps digit widths
+     fixed so a ticking number can't reflow the row. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.5rem 1.25rem;
   min-width: 0;
   font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .hud-stats strong {
@@ -1212,19 +1222,20 @@ body {
 }
 
 .tool-meta {
-  flex: 0 1 auto;
+  /* FIXED footprint (not content-sized) so a changing status message never
+     steals width from the wrapping tool-scroll and re-wraps the buttons, which
+     would change the toolbar height and jitter the map. */
+  flex: 0 0 auto;
+  width: min(16rem, 30%);
   align-self: center;
   font-size: 0.64rem;
   color: var(--text-dim);
   text-align: right;
   margin-left: auto;
-  /* Single line, clipped — a wrapping status message must never change the
-     toolbar height (which would resize/jitter the map above it). */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  max-width: 34%;
 }
 
 .toast {
