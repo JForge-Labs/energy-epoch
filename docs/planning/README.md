@@ -11,6 +11,9 @@
 | [CHECKLIST.md](./CHECKLIST.md) | Milestones and status |
 | [GRAPHICS_PASS.md](./GRAPHICS_PASS.md) | Visual quality one-pass plan (Pixi + atlas) |
 | [IOS_APP_STORE.md](./IOS_APP_STORE.md) | **Active:** Capacitor → TestFlight → App Store ($99/yr Apple) |
+| [IOS_ASC_LISTING_1.0.md](./IOS_ASC_LISTING_1.0.md) | Paste-ready ASC copy, keywords, privacy/age notes |
+| [IOS_ASC_HUMAN.md](./IOS_ASC_HUMAN.md) | Human portal + Mac order-of-operations checklist |
+| [IOS_MAC_SESSION.md](./IOS_MAC_SESSION.md) | Cloud Mac / Xcode archive → TestFlight steps |
 | [../../DESIGN.md](../../DESIGN.md) | Game design (gameplay source of truth) |
 
 ## One-liner for agents

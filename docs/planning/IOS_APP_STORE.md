@@ -68,43 +68,44 @@ npm run build → dist/
 | 0.2 | Confirm Mac + Xcode install (or book cloud Mac) | You |
 | 0.3 | Freeze **bundle ID** + display name | You + Grok |
 | 0.4 | Store readiness checklist on **product** (below) | Claude + you |
-| 0.5 | Privacy policy page live on playenergyepoch.com | Grok/Claude |
+| 0.5 | Privacy policy page live on playenergyepoch.com | **done** (2026-07-25) |
 
 **Product readiness gates (block TestFlight until mostly true):**
 
 - [ ] Core loop stable on iPhone Safari / Capacitor preview  
 - [ ] No critical treat/haul freezes; pipe + battery model understood  
 - [ ] Touch targets / safe-area / Pencil hover tip OK  
-- [ ] Save/load reliable; **export/import** exists  
-- [ ] Reset lease / new game clear  
-- [ ] Orientation: landscape or portrait locked? (recommend **landscape** for ops map)  
+- [x] Save/load reliable; **export/import** exists (HUD Export/Import JSON)  
+- [x] Reset lease / new game clear  
+- [x] Orientation: **landscape** locked for iPhone 1.0  
+
 - [ ] Performance: 30+ fps mid-iPhone at default zoom  
 
-### Phase 1 — Capacitor scaffold (engineering)
+### Phase 1 — Capacitor scaffold (engineering) — **mostly done in repo**
 
-| # | Task |
-|---|------|
-| 1.1 | `npm i @capacitor/core @capacitor/cli @capacitor/ios` |
-| 1.2 | `npx cap init` — app name, bundle ID, `webDir: dist` |
-| 1.3 | `npm run build && npx cap add ios && npx cap sync` |
-| 1.4 | Scripts: `cap:sync`, `cap:open:ios` |
-| 1.5 | iOS project settings: deployment target (iOS 15+ or 16+), orientations, status bar |
-| 1.6 | Splash + app icons (1024 App Store + asset catalog set) |
-| 1.7 | Disable overscroll rubber-banding where it fights the map; `viewport-fit=cover` already on web |
+| # | Task | Status |
+|---|------|--------|
+| 1.1 | Capacitor core/cli/ios deps | done |
+| 1.2 | `capacitor.config.ts` — `com.playenergyepoch.app`, `webDir: dist` | done |
+| 1.3 | `ios/` project + sync scripts | done |
+| 1.4 | Scripts: `cap:sync`, `cap:open:ios`, `cap:copy` | done |
+| 1.5 | iOS 15+, **iPhone-only**, **landscape-only**, status bar dark | done (2026-07-26) |
+| 1.6 | Splash + 1024 AppIcon in asset catalog | done (placeholder art OK for TF) |
+| 1.7 | `scrollEnabled: false` + native offline shell (`IS_NATIVE`) | done |
 
 **Do not commit secrets.** Signing identities stay in Xcode / CI secrets.
 
-### Phase 2 — Store compliance & content
+### Phase 2 — Store compliance & content — **drafts ready (upload is human)**
 
-| # | Task |
-|---|------|
-| 2.1 | Privacy nutrition labels: data not collected (or disclose if analytics added) |
-| 2.2 | Privacy policy HTML (local-only save, no account required for v1) |
-| 2.3 | Age rating questionnaire (sim + mild industrial theme → typically 4+ or 9+) |
-| 2.4 | Screenshots: 6.7" and 6.1" (and 12.9" iPad if supporting iPad) |
-| 2.5 | App preview video optional |
-| 2.6 | Description, keywords, subtitle, category (Games → Simulation / Strategy) |
-| 2.7 | Support URL + marketing URL (playenergyepoch.com) |
+| # | Task | Status |
+|---|------|--------|
+| 2.1 | Privacy nutrition labels | draft in IOS_ASC_LISTING_1.0.md (**Data Not Collected** for native 1.0) |
+| 2.2 | Privacy policy HTML | **done** — live at /privacy |
+| 2.3 | Age rating questionnaire | draft answers in listing doc |
+| 2.4 | Screenshots 6.7" + 6.5" landscape | **done** — fixture set in `store-assets/ios/screenshots/` |
+| 2.5 | App preview video | skip for 1.0 |
+| 2.6 | Description, keywords, subtitle, category | draft in IOS_ASC_LISTING_1.0.md |
+| 2.7 | Support + marketing URLs | playenergyepoch.com |
 
 ### Phase 3 — Signing & TestFlight
 

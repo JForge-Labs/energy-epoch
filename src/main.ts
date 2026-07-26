@@ -1,11 +1,14 @@
 import "./styles.css";
 import { Capacitor } from "@capacitor/core";
 import { clampCamera, createCamera, screenToWorld } from "./game/camera";
-import { Game } from "./game/Game";
+import { Game, type GameSnapshot } from "./game/Game";
 
 // The packaged iOS/Android app bundles dist/ and has no backend origin, so
 // accounts/cloud saves don't apply — run offline with local saves only.
-const IS_NATIVE = Capacitor.isNativePlatform();
+// ?store=1 forces the same shell for App Store screenshot capture (web).
+const IS_NATIVE =
+  Capacitor.isNativePlatform() ||
+  new URLSearchParams(location.search).has("store");
 import {
   ADD_TANK_COST,
   BATTERY_COST,
@@ -76,6 +79,9 @@ app.innerHTML = `
       <select id="profile-select" class="profile-select" title="Save profile"></select>
       <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
       <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
+      <button type="button" class="tool-btn" id="btn-export" title="Download this profile as a JSON file (backup / move devices)">Export</button>
+      <button type="button" class="tool-btn" id="btn-import" title="Load a previously exported save JSON into this profile">Import</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden />
       <button type="button" class="tool-btn" id="btn-home">Home</button>
       <button type="button" class="tool-btn" id="btn-reset">Reset lease</button>
     </div>
@@ -653,73 +659,139 @@ function saveProfiles() {
 saveProfiles();
 const activeSaveKey = () => `${SAVE_PREFIX}:${profiles.active}`;
 
+/** Flat save blob written to localStorage / export files / cloud. */
+function buildSavePayload() {
+  return {
+    v: SAVE_VERSION,
+    updatedAt: Date.now(),
+    cam,
+    spd: currentSpeed,
+    mode: game.mode,
+    map: {
+      name: game.config.mapName ?? "Prairie",
+      seed: game.config.seed,
+      cols: game.config.cols,
+      rows: game.config.rows,
+      params: game.config.mapParams,
+    },
+    game: game.serialize(),
+  };
+}
+
 function saveGame() {
   try {
-    localStorage.setItem(
-      activeSaveKey(),
-      JSON.stringify({
-        v: SAVE_VERSION,
-        updatedAt: Date.now(),
-        cam,
-        spd: currentSpeed,
-        mode: game.mode,
-        map: {
-          name: game.config.mapName ?? "Prairie",
-          seed: game.config.seed,
-          cols: game.config.cols,
-          rows: game.config.rows,
-          params: game.config.mapParams,
-        },
-        game: game.serialize(),
-      }),
-    );
+    localStorage.setItem(activeSaveKey(), JSON.stringify(buildSavePayload()));
     pushCloudSave();
   } catch {
     // storage full / unavailable — non-fatal, game keeps running in memory
   }
 }
 
+/** Apply a parsed save snapshot. Returns false if structurally invalid. */
+function applySaveSnapshot(snap: {
+  v?: number;
+  game?: unknown;
+  cam?: { x: number; y: number; zoom: number };
+  spd?: number;
+  mode?: string;
+  intOn?: boolean;
+  map?: {
+    name?: string;
+    seed?: number;
+    cols?: number;
+    rows?: number;
+    params?: unknown;
+  };
+}): boolean {
+  if (snap.v !== SAVE_VERSION || !snap.game || typeof snap.game !== "object") {
+    return false;
+  }
+  // Validity guard: reject only structurally-broken grids. Any well-formed
+  // grid loads regardless of size — applyState syncs config to the saved
+  // lease, so a save made on the old 56×36 map still opens (and survives).
+  const t = (snap.game as { tiles?: unknown }).tiles;
+  if (
+    !Array.isArray(t) ||
+    t.length === 0 ||
+    !Array.isArray(t[0]) ||
+    t[0].length === 0
+  ) {
+    return false;
+  }
+  game.applyState(snap.game as GameSnapshot);
+  if (snap.cam) {
+    cam.x = snap.cam.x;
+    cam.y = snap.cam.y;
+    cam.zoom = snap.cam.zoom;
+    clampCamera(cam, game.config.cols, game.config.rows);
+  }
+  // Restore speed, but never load into a frozen (paused) sim.
+  if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
+  // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
+  if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
+  else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
+  // Map identity (tiles themselves come from applyState; this is for display
+  // + the cloud). config is mutable field-wise even though the ref is readonly.
+  if (snap.map) {
+    if (snap.map.name) game.config.mapName = snap.map.name;
+    if (typeof snap.map.seed === "number") game.config.seed = snap.map.seed;
+    if (snap.map.params) {
+      game.config.mapParams = snap.map.params as typeof game.config.mapParams;
+    }
+  }
+  return true;
+}
+
 function loadGame(): boolean {
   try {
     const raw = localStorage.getItem(activeSaveKey());
     if (!raw) return false;
-    const snap = JSON.parse(raw);
-    if (snap.v !== SAVE_VERSION || !snap.game) return false;
-    // Validity guard: reject only structurally-broken grids. Any well-formed
-    // grid loads regardless of size — applyState syncs config to the saved
-    // lease, so a save made on the old 56×36 map still opens (and survives).
-    const t = snap.game.tiles;
-    if (
-      !Array.isArray(t) ||
-      t.length === 0 ||
-      !Array.isArray(t[0]) ||
-      t[0].length === 0
-    ) {
-      return false;
-    }
-    game.applyState(snap.game);
-    if (snap.cam) {
-      cam.x = snap.cam.x;
-      cam.y = snap.cam.y;
-      cam.zoom = snap.cam.zoom;
-      clampCamera(cam, game.config.cols, game.config.rows);
-    }
-    // Restore speed, but never load into a frozen (paused) sim.
-    if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
-    // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
-    if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
-    else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
-    // Map identity (tiles themselves come from applyState; this is for display
-    // + the cloud). config is mutable field-wise even though the ref is readonly.
-    if (snap.map) {
-      game.config.mapName = snap.map.name;
-      game.config.seed = snap.map.seed;
-      game.config.mapParams = snap.map.params;
-    }
-    return true;
+    return applySaveSnapshot(JSON.parse(raw));
   } catch {
     return false;
   }
+}
+
+function exportSave() {
+  try {
+    saveGame();
+    const raw = localStorage.getItem(activeSaveKey()) ?? JSON.stringify(buildSavePayload());
+    const blob = new Blob([raw], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safe = profiles.active.replace(/[^\w.-]+/g, "_");
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `energy-epoch-${safe}-${stamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    flash(`Exported profile "${profiles.active}".`);
+  } catch {
+    flash("Export failed — storage unavailable.");
+  }
+}
+
+function importSaveFile(file: File) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const snap = JSON.parse(String(reader.result ?? ""));
+      if (!applySaveSnapshot(snap)) {
+        flash(
+          snap?.v && snap.v !== SAVE_VERSION
+            ? `Import failed — save version ${snap.v} (need v${SAVE_VERSION}).`
+            : "Import failed — invalid or corrupt save file.",
+        );
+        return;
+      }
+      saveGame();
+      flash(`Imported into "${profiles.active}".`);
+    } catch {
+      flash("Import failed — not valid JSON.");
+    }
+  };
+  reader.onerror = () => flash("Import failed — could not read file.");
+  reader.readAsText(file);
 }
 
 // --- Decision hold (Bug #6) ---------------------------------------------
@@ -1084,6 +1156,14 @@ document.querySelector("#profile-select")!.addEventListener("change", (e) => {
 });
 document.querySelector("#btn-new-profile")!.addEventListener("click", newProfile);
 document.querySelector("#btn-del-profile")!.addEventListener("click", deleteProfile);
+document.querySelector("#btn-export")!.addEventListener("click", exportSave);
+const importFileEl = document.querySelector<HTMLInputElement>("#import-file")!;
+document.querySelector("#btn-import")!.addEventListener("click", () => importFileEl.click());
+importFileEl.addEventListener("change", () => {
+  const file = importFileEl.files?.[0];
+  importFileEl.value = "";
+  if (file) importSaveFile(file);
+});
 
 document.querySelectorAll(".spd-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
