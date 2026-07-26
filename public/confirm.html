@@ -33,8 +33,15 @@
           return r.json();
         })
         .then(function () {
-          msg.textContent = "Signed in! Loading the game…";
-          location.replace("/?signedin=1");
+          var next = (new URLSearchParams(location.search).get("next") || "").toLowerCase();
+          var onAdmin = location.hostname.indexOf("admin.") === 0;
+          if (onAdmin || next === "admin") {
+            msg.textContent = "Signed in! Opening admin…";
+            location.replace(onAdmin ? "/" : "https://admin.playenergyepoch.com/");
+          } else {
+            msg.textContent = "Signed in! Loading the game…";
+            location.replace("/?signedin=1");
+          }
         })
         .catch(function (e) {
           msg.textContent = (e && e.message ? e.message : "Sign-in failed") + " ";
