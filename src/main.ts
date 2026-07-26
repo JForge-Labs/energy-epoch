@@ -1,6 +1,11 @@
 import "./styles.css";
+import { Capacitor } from "@capacitor/core";
 import { clampCamera, createCamera, screenToWorld } from "./game/camera";
 import { Game } from "./game/Game";
+
+// The packaged iOS/Android app bundles dist/ and has no backend origin, so
+// accounts/cloud saves don't apply — run offline with local saves only.
+const IS_NATIVE = Capacitor.isNativePlatform();
 import {
   ADD_TANK_COST,
   BATTERY_COST,
@@ -1020,7 +1025,13 @@ accountBtn.addEventListener("click", async () => {
 });
 
 // On load: check the session and either open the game, gate it, or fail open.
-apiMe().then((state) => {
+// Native app: skip auth entirely — offline, local saves, no gate, no cloud.
+if (IS_NATIVE) {
+  showGate(false); // offline app: no gate, no cloud, local saves only
+  accountBtn.hidden = true;
+  accountTag.hidden = true;
+} else
+  apiMe().then((state) => {
   if (state === "in") {
     showGate(false);
     pullCloudSaves();
