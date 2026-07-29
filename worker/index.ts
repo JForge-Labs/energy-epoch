@@ -190,7 +190,11 @@ export default {
           status: page.status,
           headers: {
             "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store",
+            // Kill browser + CF edge HTML caching (stale SPA shells looked like “old builds”).
+            "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+            "cdn-cache-control": "no-store",
+            "cloudflare-cdn-cache-control": "no-store",
+            "x-ee-build": "121c41f",
           },
         });
       };
