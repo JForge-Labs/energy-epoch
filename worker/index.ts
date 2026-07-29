@@ -101,12 +101,24 @@ function cookieDomainAttr(req: Request): string {
 }
 function cookieHeader(id: string, req: Request): string {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  // Host-only + optional Domain for sibling subdomains. Prefer Secure; SameSite=Lax
-  // so top-level email → site navigations still attach the cookie afterward.
-  return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}${cookieDomainAttr(req)}`;
+  // Host-only first (reliable on app.). Also set Domain= for admin cross-subdomain
+  // via a second Set-Cookie when on production hosts — see cookieHeaderPair.
+  return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+}
+function cookieHeaderWithDomain(id: string, req: Request): string | null {
+  const dom = cookieDomainAttr(req);
+  if (!dom) return null;
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}${dom}`;
+}
+function appendSessionCookies(headers: Headers, sid: string, req: Request): void {
+  headers.append("Set-Cookie", cookieHeader(sid, req));
+  const withDom = cookieHeaderWithDomain(sid, req);
+  if (withDom) headers.append("Set-Cookie", withDom);
 }
 function clearCookieHeader(req: Request): string {
-  return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0${cookieDomainAttr(req)}`;
+  // Clear host-only; domain clear is separate if needed.
+  return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
 /** One-time post-login codes so the game page can re-attach the session cookie. */
@@ -317,15 +329,38 @@ export default {
         )
           .bind(await sha256hex(handoff), sid, now + 5 * 60 * 1000)
           .run();
-        // JSON (not a 302) — fetch() from /confirm; Set-Cookie via Headers#append.
-        return jsonWithCookie({ ok: true, handoff }, cookieHeader(sid, req));
+        // JSON for confirm page fetch; also set cookie here when the browser allows it.
+        const headers = new Headers({ "content-type": "application/json" });
+        appendSessionCookies(headers, sid, req);
+        return new Response(JSON.stringify({ ok: true, handoff }), { status: 200, headers });
       }
 
-      // --- POST /api/auth/handoff { handoff } → re-set session cookie on this host ---
-      if (url.pathname === "/api/auth/handoff" && req.method === "POST") {
-        const body = (await req.json().catch(() => ({}))) as { handoff?: string };
-        const code = String(body.handoff ?? "").replace(/[^a-f0-9]/gi, "");
-        if (!code) return json({ error: "missing handoff" }, 400);
+      // --- Redeem handoff → Set-Cookie (JSON fetch OR full-page form POST) ---
+      // Full-page POST is more reliable than fetch() Set-Cookie in some webviews.
+      if (url.pathname === "/api/auth/handoff" || url.pathname === "/api/auth/session") {
+        let code = "";
+        if (req.method === "POST") {
+          const ct = (req.headers.get("content-type") ?? "").toLowerCase();
+          if (ct.includes("application/json")) {
+            const body = (await req.json().catch(() => ({}))) as { handoff?: string };
+            code = String(body.handoff ?? "");
+          } else {
+            const form = await req.formData().catch(() => null);
+            code = String(form?.get("handoff") ?? form?.get("h") ?? "");
+          }
+        } else if (req.method === "GET") {
+          // Prefer not to use GET (email prefetch); still supported with one-time codes.
+          code = url.searchParams.get("h") ?? url.searchParams.get("handoff") ?? "";
+        } else {
+          return json({ error: "method not allowed" }, 405);
+        }
+        code = code.replace(/[^a-f0-9]/gi, "");
+        if (!code) {
+          if (req.method === "GET" || (req.headers.get("accept") ?? "").includes("text/html")) {
+            return Response.redirect(`${env.APP_URL}/?signin=failed`, 303);
+          }
+          return json({ error: "missing handoff" }, 400);
+        }
         await ensureHandoffTable(env);
         const hash = await sha256hex(code);
         const row = await env.DB.prepare(
@@ -334,19 +369,41 @@ export default {
           .bind(hash)
           .first<{ session_id: string; expires_at: number }>();
         if (!row || row.expires_at < now) {
+          if (req.method === "GET" || (req.headers.get("accept") ?? "").includes("text/html")) {
+            return Response.redirect(`${env.APP_URL}/?signin=failed`, 303);
+          }
           return json({ error: "invalid or expired handoff" }, 400);
         }
         await env.DB.prepare(`DELETE FROM auth_handoffs WHERE code_hash = ?`)
           .bind(hash)
           .run();
-        // Ensure session still exists
         const sess = await env.DB.prepare(
           `SELECT user_id FROM sessions WHERE id_hash = ? AND expires_at > ?`,
         )
           .bind(await sha256hex(row.session_id), now)
           .first();
-        if (!sess) return json({ error: "session expired" }, 401);
-        return jsonWithCookie({ ok: true }, cookieHeader(row.session_id, req));
+        if (!sess) {
+          if (req.method === "GET" || (req.headers.get("accept") ?? "").includes("text/html")) {
+            return Response.redirect(`${env.APP_URL}/?signin=failed`, 303);
+          }
+          return json({ error: "session expired" }, 401);
+        }
+        // Full-page / form POST → 303 into the game with cookie on the navigation response.
+        const wantsNav =
+          url.pathname === "/api/auth/session" ||
+          req.method === "GET" ||
+          (req.headers.get("accept") ?? "").includes("text/html");
+        if (wantsNav) {
+          const headers = new Headers({
+            Location: `${env.APP_URL.replace(/\/$/, "")}/?signedin=1`,
+            "cache-control": "no-store",
+          });
+          appendSessionCookies(headers, row.session_id, req);
+          return new Response(null, { status: 303, headers });
+        }
+        const headers = new Headers({ "content-type": "application/json" });
+        appendSessionCookies(headers, row.session_id, req);
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
       }
 
       // --- GET /api/me ---
@@ -365,7 +422,16 @@ export default {
             .bind(await sha256hex(sid))
             .run();
         }
-        return jsonWithCookie({ ok: true }, clearCookieHeader(req));
+        const headers = new Headers({ "content-type": "application/json" });
+        headers.append("Set-Cookie", clearCookieHeader(req));
+        const dom = cookieDomainAttr(req);
+        if (dom) {
+          headers.append(
+            "Set-Cookie",
+            `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0${dom}`,
+          );
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
       }
 
       // --- GET /api/admin/signups — operator only ---

@@ -1181,8 +1181,10 @@ if (IS_NATIVE) {
   accountBtn.hidden = true;
   accountTag.hidden = true;
 } else {
-  const justSignedIn = new URLSearchParams(location.search).has("signedin");
-  const bootAuth = justSignedIn ? apiMeAfterSignIn() : apiMe();
+  const params = new URLSearchParams(location.search);
+  const justSignedIn = params.has("signedin");
+  const signInFailed = params.get("signin") === "failed";
+  const bootAuth = justSignedIn || params.has("h") ? apiMeAfterSignIn() : apiMe();
   bootAuth.then((state) => {
     if (state === "in") {
       showGate(false);
@@ -1190,11 +1192,24 @@ if (IS_NATIVE) {
       ensureGamertag();
       if (justSignedIn) {
         flash(`Signed in as ${account?.name || account?.email}. Your games & maps now sync.`);
+      }
+      if (justSignedIn || signInFailed || params.has("h")) {
         history.replaceState(null, "", location.pathname);
       }
     } else if (state === "out") {
-      // Deployed, reachable, no session → require sign-in to play the full game.
-      showGate(true);
+      // After a magic-link attempt, never hard-lock — cookies may be blocked.
+      if (justSignedIn || signInFailed) {
+        showGate(false);
+        flash(
+          signInFailed
+            ? "Sign-in link expired or already used — request a new one, or play offline."
+            : "Couldn't attach your session (cookie blocked?). Use ⋯ → Sign in, or play offline.",
+        );
+        history.replaceState(null, "", location.pathname);
+      } else {
+        // Cold visit on app.: show gate (Play offline available).
+        showGate(true);
+      }
     } else {
       showGate(false); // offline / dev — keep playing locally.
     }

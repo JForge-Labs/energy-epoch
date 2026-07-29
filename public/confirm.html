@@ -44,14 +44,27 @@
           if (onAdmin || next === "admin") {
             msg.textContent = "Signed in! Opening admin…";
             location.replace(ADMIN_HOME);
-          } else {
-            msg.textContent = "Signed in! Loading the game…";
-            // Absolute app URL + handoff so the game host can re-attach the cookie
-            // even if Set-Cookie on this fetch was ignored by the browser/webview.
-            var h = (data && data.handoff) ? String(data.handoff).replace(/[^a-f0-9]/gi, "") : "";
-            var q = "signedin=1" + (h ? "&h=" + encodeURIComponent(h) : "");
-            location.replace(APP_HOME + "?" + q);
+            return;
           }
+          msg.textContent = "Signed in! Loading the game…";
+          // Full-page POST to /api/auth/session sets the cookie on a real navigation
+          // response (more reliable than fetch Set-Cookie in email webviews).
+          var h = (data && data.handoff) ? String(data.handoff).replace(/[^a-f0-9]/gi, "") : "";
+          if (h) {
+            var form = document.createElement("form");
+            form.method = "POST";
+            form.action = APP_HOME.replace(/\/$/, "") + "/api/auth/session";
+            form.acceptCharset = "UTF-8";
+            var input = document.createElement("input");
+            input.type = "hidden";
+            input.name = "handoff";
+            input.value = h;
+            form.appendChild(input);
+            document.body.appendChild(form);
+            form.submit();
+            return;
+          }
+          location.replace(APP_HOME + "?signedin=1");
         })
         .catch(function (e) {
           msg.textContent = (e && e.message ? e.message : "Sign-in failed") + " ";

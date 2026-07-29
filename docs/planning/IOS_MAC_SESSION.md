@@ -25,28 +25,19 @@ Mac / Xcode Cloud then die resolving packages. Fix:
 
 If Cloud still emails failures: confirm the workflow branch is **`main`**, GitHub app can read **JForge-Labs/energy-epoch**, and Node is available on the Cloud image.
 
-### If you get Xcode build failure emails but nothing “flagged” in the UI
+### Stop Xcode Cloud failure emails (do this now)
 
-That usually means a **half-finished Xcode Cloud workflow** (started from Xcode’s “set up Xcode Cloud” wizard, then abandoned), not a broken TestFlight archive.
+Every push to `main` (including web deploys) can trigger a half-configured **Xcode Cloud** workflow → Apple emails “xcodebuild failed” even when you only changed the website.
 
-Typical causes:
+**Disable it (2 minutes):**
 
-1. **GitHub connection incomplete** after the repo moved to `JForge-Labs/energy-epoch` (old `jfodchuk/energy-epoch` link, missing org install, or branch never selected).  
-2. **Workflow triggers on every push** to a branch that never finishes product setup → email “Build failed” while the Cloud dashboard looks empty or stuck on onboarding.  
-3. **No `ci_post_clone.sh`** → Xcode Cloud builds `ios/` without web assets / SPM / node modules.
+1. [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → **Energy Epoch**  
+2. **Xcode Cloud** (left sidebar; or Xcode → **Integrate / Product → Xcode Cloud**)  
+3. Open each **Workflow** → **Manage Workflow** / **⋯** → **Delete** or turn **Start Conditions** off  
+4. Optionally: Xcode → Settings → Accounts → remove Cloud for this product  
 
-**What to do (human, ASC / Xcode):**
-
-1. App Store Connect → **Energy Epoch** → **Xcode Cloud** (or Xcode → **Product → Xcode Cloud**).  
-2. If a workflow exists you did not finish: **delete / disable** it for now.  
-3. Confirm you are **not** using Xcode Cloud for shipping — use **Product → Archive** on the Mac VM only.  
-4. Optional later: full Xcode Cloud setup needs:
-   - GitHub App access for **JForge-Labs/energy-epoch**  
-   - Branch: `main` (or a release branch)  
-   - `ci_scripts/ci_post_clone.sh` that runs `npm ci && npm run build && npx cap sync ios`  
-   - Correct scheme **App**, distribution → TestFlight  
-
-Until that exists in-repo, **ignore Xcode Cloud emails** or turn the workflow off so inbox noise stops.
+Canonical iOS ship remains **local Mac: Product → Archive → Upload**.  
+Repo has `ci_scripts/` for a future Cloud setup, but **do not rely on Cloud for 1.0**.
 
 ---
 
