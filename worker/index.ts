@@ -66,10 +66,19 @@ function json(obj: unknown, status = 200, headers: Record<string, string> = {}):
 function requestHost(req: Request): string {
   return (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
 }
-/** Share session across app. / admin. / apex on production. */
+/**
+ * Share session across app. / admin. / apex on production only.
+ * Intentional: admin dashboard and app share one login. Tradeoff: any
+ * *.playenergyepoch.com host can receive the cookie — keep subdomains trusted.
+ */
 function cookieDomainAttr(req: Request): string {
   const host = requestHost(req);
-  if (host === "playenergyepoch.com" || host.endsWith(".playenergyepoch.com")) {
+  // Only widen when the request is already on our known production hosts.
+  if (
+    host === "playenergyepoch.com" ||
+    host === "app.playenergyepoch.com" ||
+    host === "admin.playenergyepoch.com"
+  ) {
     return "; Domain=.playenergyepoch.com";
   }
   return "";

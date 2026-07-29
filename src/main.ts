@@ -944,20 +944,23 @@ function newProfile() {
     switchProfile(name);
     return;
   }
-  saveGame(); // persist current before creating the new one
-  profiles.names.push(name);
-  profiles.active = name;
-  saveProfiles();
-  refreshProfileUI();
+  // Persist the current lease first, but do NOT switch profiles until a map is
+  // picked. Committing early made cancel leave activeSaveKey() on an empty slot
+  // while the in-memory game was still the previous lease (autosaves went wrong).
+  saveGame();
   showMapPicker(
     (cfg) => {
+      profiles.names.push(name);
+      profiles.active = name;
+      saveProfiles();
+      refreshProfileUI();
       bootGame(false, cfg);
       saveGame();
       flash(`Created "${name}" on ${cfg.mapName}.`);
     },
     {
       cancellable: true,
-      hint: `New profile "${name}" — pick a starting map, or ✕ to stay on the previous lease view.`,
+      hint: `New profile "${name}" — pick a starting map, or ✕ to cancel (no profile created).`,
     },
   );
 }
