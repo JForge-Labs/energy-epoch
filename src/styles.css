@@ -102,26 +102,14 @@ body {
   font-weight: 600;
 }
 
-/* Mode + speed + overflow menu — always visible, never jammed under stats. */
+/* Speed + ⋯ only on the bar — Mode / profiles live in the overflow menu. */
 .hud-controls {
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.3rem;
   min-width: 0;
-  max-width: min(100%, 28rem);
-}
-.hud-controls .mode-btn {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 7.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.72rem;
-  padding: 0.35rem 0.5rem;
-  min-height: 2.4rem;
 }
 .hud-menu-wrap {
   position: relative;
@@ -1072,7 +1060,8 @@ body {
   background: rgba(8, 10, 8, 0.82);
   display: grid;
   place-items: center;
-  padding: 1rem;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
 }
 .map-picker[hidden] {
   display: none;
@@ -1085,11 +1074,43 @@ body {
   max-height: 88vh;
   overflow: auto;
 }
+.map-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
 .map-picker-card h2 {
   font-family: var(--font-display);
   color: var(--amber);
-  margin-bottom: 0.75rem;
-  text-align: center;
+  margin: 0;
+  text-align: left;
+  flex: 1 1 auto;
+  font-size: 1.15rem;
+}
+.map-picker-x {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--bg-panel-edge);
+  background: #141916;
+  color: var(--text);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 0.3rem;
+}
+.map-picker-x:hover {
+  border-color: var(--amber);
+  color: var(--amber-hot);
+}
+.map-picker-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  line-height: 1.35;
 }
 .map-list {
   display: grid;
@@ -1525,13 +1546,6 @@ body {
   }
   .hud-controls {
     gap: 0.25rem;
-    max-width: none;
-  }
-  .hud-controls .mode-btn {
-    max-width: 6.2rem;
-    font-size: 0.66rem;
-    min-height: 2.35rem;
-    padding: 0.3rem 0.4rem;
   }
   .spd-btn {
     min-width: 2rem;
@@ -1650,12 +1664,6 @@ body {
   .hud-controls {
     flex-shrink: 0;
     gap: 0.25rem;
-  }
-  .hud-controls .mode-btn {
-    max-width: 5.8rem;
-    font-size: 0.64rem;
-    min-height: 2.2rem;
-    padding: 0.25rem 0.35rem;
   }
   .spd-btn {
     min-width: 1.9rem;

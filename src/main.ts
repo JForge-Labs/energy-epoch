@@ -76,7 +76,6 @@ app.innerHTML = `
       <button type="button" class="metrics-toggle" id="inspect-toggle" title="Inspect tooltip (press I) — hover tiles for details" aria-label="Toggle inspect tooltip">ⓘ</button>
     </div>
     <div class="hud-controls">
-      <button type="button" class="tool-btn mode-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
         <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
@@ -84,24 +83,22 @@ app.innerHTML = `
         <button type="button" class="spd-btn" data-spd="2">2×</button>
       </div>
       <div class="hud-menu-wrap">
-        <button type="button" class="metrics-toggle hud-menu-btn" id="hud-menu-btn" title="Lease & save actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="hud-menu">⋯</button>
+        <button type="button" class="metrics-toggle hud-menu-btn" id="hud-menu-btn" title="Mode, profiles, lease & save" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="hud-menu">⋯</button>
         <div class="hud-menu" id="hud-menu" role="menu" hidden>
           <span id="account-tag" class="account-tag hud-menu-tag" hidden></span>
           <button type="button" class="hud-menu-item" id="btn-account" role="menuitem" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
-          <label class="hud-menu-label" for="profile-select">Profile</label>
+          <button type="button" class="hud-menu-item" id="btn-hard" role="menuitem" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
+          <div class="hud-menu-sep" role="separator"></div>
+          <label class="hud-menu-label" for="profile-select">Profile / map save</label>
           <select id="profile-select" class="profile-select hud-menu-select" title="Save profile"></select>
           <button type="button" class="hud-menu-item" id="btn-new-profile" role="menuitem" title="New profile">+ New profile</button>
           <button type="button" class="hud-menu-item danger" id="btn-del-profile" role="menuitem" title="Delete this profile">Delete profile</button>
           <div class="hud-menu-sep" role="separator"></div>
-          <button type="button" class="hud-menu-item" id="btn-export" role="menuitem" title="Download this profile as a JSON file (backup / move devices)">Export save</button>
-          <button type="button" class="hud-menu-item" id="btn-import" role="menuitem" title="Load a previously exported save JSON into this profile">Import save</button>
-          <div class="hud-menu-sep" role="separator"></div>
           <button type="button" class="hud-menu-item" id="btn-home" role="menuitem">Home (recenter)</button>
-          <button type="button" class="hud-menu-item danger" id="btn-reset" role="menuitem">Reset lease</button>
+          <button type="button" class="hud-menu-item danger" id="btn-reset" role="menuitem">Reset lease…</button>
         </div>
       </div>
     </div>
-    <input type="file" id="import-file" accept="application/json,.json" hidden />
   </header>
   <div class="stage-wrap">
     <canvas id="game-canvas"></canvas>
@@ -151,8 +148,12 @@ app.innerHTML = `
       </div>
     </div>
     <div class="map-picker" id="map-picker" hidden>
-      <div class="map-picker-card">
-        <h2>Choose your lease</h2>
+      <div class="map-picker-card" role="dialog" aria-modal="true" aria-labelledby="map-picker-title">
+        <div class="map-picker-head">
+          <h2 id="map-picker-title">Choose your lease</h2>
+          <button type="button" class="map-picker-x" id="map-picker-close" aria-label="Cancel map selection">✕</button>
+        </div>
+        <p class="map-picker-hint" id="map-picker-hint">Pick a map preset, or ✕ to keep your current lease.</p>
         <div class="map-list" id="map-list"></div>
       </div>
     </div>
@@ -782,55 +783,17 @@ function loadGame(): boolean {
   }
 }
 
-function exportSave() {
-  try {
-    saveGame();
-    const raw = localStorage.getItem(activeSaveKey()) ?? JSON.stringify(buildSavePayload());
-    const blob = new Blob([raw], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const safe = profiles.active.replace(/[^\w.-]+/g, "_");
-    const stamp = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `energy-epoch-${safe}-${stamp}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    flash(`Exported profile "${profiles.active}".`);
-  } catch {
-    flash("Export failed — storage unavailable.");
-  }
-}
-
-function importSaveFile(file: File) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const snap = JSON.parse(String(reader.result ?? ""));
-      if (!applySaveSnapshot(snap)) {
-        flash(
-          snap?.v && snap.v !== SAVE_VERSION
-            ? `Import failed — save version ${snap.v} (need v${SAVE_VERSION}).`
-            : "Import failed — invalid or corrupt save file.",
-        );
-        return;
-      }
-      saveGame();
-      flash(`Imported into "${profiles.active}".`);
-    } catch {
-      flash("Import failed — not valid JSON.");
-    }
-  };
-  reader.onerror = () => flash("Import failed — could not read file.");
-  reader.readAsText(file);
-}
-
 // --- Decision hold (Bug #6) ---------------------------------------------
 // While the player is mid-decision (a two-click confirm is pending, or the
 // ledger modal is open) the sim must not advance. We freeze by forcing
 // game.timeScale to 0, but keep `currentSpeed` as the player's chosen speed
 // so it (including a player-chosen pause of 0) is restored on release.
 function decisionHeld(): boolean {
-  return pendingConfirm !== null || !ledgerModal.hidden;
+  return (
+    pendingConfirm !== null ||
+    !ledgerModal.hidden ||
+    !mapPickerEl.hidden
+  );
 }
 
 function applyTimeHold() {
@@ -879,8 +842,24 @@ function bootGame(restore: boolean, config?: Partial<GameConfig>): boolean {
 }
 
 const mapPickerEl = document.querySelector<HTMLDivElement>("#map-picker")!;
-// Show the map picker and start a fresh lease with the chosen preset.
-function showMapPicker(onPick: (cfg: Partial<GameConfig>) => void) {
+const mapPickerClose = document.querySelector<HTMLButtonElement>("#map-picker-close")!;
+const mapPickerHint = document.querySelector<HTMLElement>("#map-picker-hint")!;
+/** Optional cancel path while the lease map sheet is open (Reset / accidental open). */
+let mapPickerOnCancel: (() => void) | null = null;
+
+function hideMapPicker() {
+  if (mapPickerEl.hidden) return;
+  mapPickerEl.hidden = true;
+  mapPickerOnCancel = null;
+  applyTimeHold();
+}
+
+/** Show map presets. Cancel (✕ / backdrop) keeps the current lease unless first-run forces a pick. */
+function showMapPicker(
+  onPick: (cfg: Partial<GameConfig>) => void,
+  opts?: { cancellable?: boolean; hint?: string },
+) {
+  const cancellable = opts?.cancellable !== false;
   const list = document.querySelector<HTMLDivElement>("#map-list")!;
   list.innerHTML = "";
   for (const p of MAP_PRESETS) {
@@ -889,21 +868,51 @@ function showMapPicker(onPick: (cfg: Partial<GameConfig>) => void) {
     card.className = "map-choice";
     card.innerHTML = `<strong>${p.name}</strong><span>${p.blurb}</span>`;
     card.addEventListener("click", () => {
-      mapPickerEl.hidden = true;
+      hideMapPicker();
       onPick(presetToConfig(p));
     });
     list.appendChild(card);
   }
+  mapPickerClose.hidden = !cancellable;
+  mapPickerEl.dataset.cancellable = String(cancellable);
+  mapPickerHint.textContent = cancellable
+    ? (opts?.hint ?? "Pick a map preset, or ✕ / tap outside to cancel.")
+    : (opts?.hint ?? "Pick a map preset to start this lease.");
+  mapPickerOnCancel = cancellable
+    ? () => {
+        hideMapPicker();
+        flash("Map selection cancelled — current lease unchanged.");
+      }
+    : null;
   mapPickerEl.hidden = false;
+  applyTimeHold();
 }
 
+mapPickerClose.addEventListener("click", (e) => {
+  e.stopPropagation();
+  mapPickerOnCancel?.();
+});
+// Tap dimmed backdrop to cancel (not the card).
+mapPickerEl.addEventListener("click", (e) => {
+  if (e.target === mapPickerEl) mapPickerOnCancel?.();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !mapPickerEl.hidden) mapPickerOnCancel?.();
+});
+
 function resetLease() {
-  showMapPicker((cfg) => {
-    localStorage.removeItem(activeSaveKey());
-    bootGame(false, cfg);
-    flash(`New ${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
-    saveGame();
-  });
+  showMapPicker(
+    (cfg) => {
+      localStorage.removeItem(activeSaveKey());
+      bootGame(false, cfg);
+      flash(`New ${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+      saveGame();
+    },
+    {
+      cancellable: true,
+      hint: "Reset wipes this profile’s save. Pick a map, or ✕ to keep playing.",
+    },
+  );
 }
 
 function refreshProfileUI() {
@@ -940,11 +949,17 @@ function newProfile() {
   profiles.active = name;
   saveProfiles();
   refreshProfileUI();
-  showMapPicker((cfg) => {
-    bootGame(false, cfg);
-    saveGame();
-    flash(`Created "${name}" on ${cfg.mapName}.`);
-  });
+  showMapPicker(
+    (cfg) => {
+      bootGame(false, cfg);
+      saveGame();
+      flash(`Created "${name}" on ${cfg.mapName}.`);
+    },
+    {
+      cancellable: true,
+      hint: `New profile "${name}" — pick a starting map, or ✕ to stay on the previous lease view.`,
+    },
+  );
 }
 
 function deleteProfile() {
@@ -1218,14 +1233,6 @@ document.querySelector("#profile-select")!.addEventListener("change", (e) => {
 });
 document.querySelector("#btn-new-profile")!.addEventListener("click", newProfile);
 document.querySelector("#btn-del-profile")!.addEventListener("click", deleteProfile);
-document.querySelector("#btn-export")!.addEventListener("click", exportSave);
-const importFileEl = document.querySelector<HTMLInputElement>("#import-file")!;
-document.querySelector("#btn-import")!.addEventListener("click", () => importFileEl.click());
-importFileEl.addEventListener("change", () => {
-  const file = importFileEl.files?.[0];
-  importFileEl.value = "";
-  if (file) importSaveFile(file);
-});
 
 document.querySelectorAll(".spd-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -2141,7 +2148,7 @@ function syncHud() {
     ? `$${money(d.interestPerDay)}`
     : "off";
   const hardBtn = document.querySelector("#btn-hard") as HTMLElement;
-  hardBtn.textContent = d.mode === "hard" ? "Mode: Hard" : "Mode: Easy";
+  hardBtn.textContent = d.mode === "hard" ? "Mode: Hard ▸ tap for Easy" : "Mode: Easy ▸ tap for Hard";
   hardBtn.classList.toggle("active", d.mode === "hard");
   const repEl = document.querySelector("#stat-rep") as HTMLElement;
   repEl.textContent = game.player.reputation.toFixed(0);
@@ -2257,11 +2264,18 @@ if (restored) {
   flash(`Profile "${profiles.active}" restored. Autosaves as you play.`);
 } else {
   // First run on this profile — let the player choose their lease.
-  showMapPicker((cfg) => {
-    bootGame(false, cfg);
-    saveGame();
-    flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
-  });
+  // Still cancellable: a default Game is already running if they dismiss.
+  showMapPicker(
+    (cfg) => {
+      bootGame(false, cfg);
+      saveGame();
+      flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+    },
+    {
+      cancellable: true,
+      hint: "Pick a starting map. ✕ keeps the default starter lease.",
+    },
+  );
 }
 rafId = requestAnimationFrame(frame);
 
