@@ -7,10 +7,23 @@ Use this on a **rented Mac** after ASC + Bundle ID exist and the repo has `ios/`
 | Method | Status |
 |--------|--------|
 | **Local Archive on Mac** → Upload to App Store Connect | **Canonical** — use this |
-| **Xcode Cloud** (build from GitHub in the cloud) | **Not configured** — do **not** rely on it for 1.0 |
+| **Xcode Cloud** (build from GitHub in the cloud) | **Optional** — needs GitHub link + `ci_scripts/ci_post_clone.sh` (in repo) |
 
-There is **no** Xcode Cloud workflow in this repo (`ci_scripts/`, cloud workflow YAML, etc.).  
-Capacitor needs `npm ci` + `npm run build` + `cap sync` before `xcodebuild`; plain Xcode Cloud checkouts will fail unless you add post-clone scripts later.
+### Xcode Cloud known failure (fixed in git)
+
+Windows `npx cap sync ios` used to commit `ios/App/CapApp-SPM/Package.swift` with **backslash** paths:
+
+```swift
+path: "..\\..\\..\\node_modules\\@capacitor\\app"  // Swift: invalid escape sequence
+```
+
+Mac / Xcode Cloud then die resolving packages. Fix:
+
+1. `Package.swift` must use **POSIX** `/` separators (committed).  
+2. `npm run cap:sync` runs `scripts/fix-ios-spm-paths.mjs` after every sync.  
+3. Xcode Cloud post-clone: `ci_scripts/ci_post_clone.sh` → `npm ci` + build + cap sync + path fix.
+
+If Cloud still emails failures: confirm the workflow branch is **`main`**, GitHub app can read **JForge-Labs/energy-epoch**, and Node is available on the Cloud image.
 
 ### If you get Xcode build failure emails but nothing “flagged” in the UI
 

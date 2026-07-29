@@ -2,6 +2,8 @@
 import PackageDescription
 
 // DO NOT MODIFY THIS FILE - managed by Capacitor CLI commands
+// Paths must use POSIX separators (/). Windows cap sync can emit `\`;
+// `npm run cap:sync` normalizes via scripts/fix-ios-spm-paths.mjs.
 let package = Package(
     name: "CapApp-SPM",
     platforms: [.iOS(.v15)],
@@ -12,10 +14,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.4.2"),
-        .package(name: "CapacitorApp", path: "..\..\..\node_modules\@capacitor\app"),
-        .package(name: "CapacitorHaptics", path: "..\..\..\node_modules\@capacitor\haptics"),
-        .package(name: "CapacitorKeyboard", path: "..\..\..\node_modules\@capacitor\keyboard"),
-        .package(name: "CapacitorStatusBar", path: "..\..\..\node_modules\@capacitor\status-bar")
+        .package(name: "CapacitorApp", path: "../../../node_modules/@capacitor/app"),
+        .package(name: "CapacitorHaptics", path: "../../../node_modules/@capacitor/haptics"),
+        .package(name: "CapacitorKeyboard", path: "../../../node_modules/@capacitor/keyboard"),
+        .package(name: "CapacitorStatusBar", path: "../../../node_modules/@capacitor/status-bar")
     ],
     targets: [
         .target(

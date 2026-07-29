@@ -9,9 +9,10 @@
     "preview": "vite preview",
     "test": "esbuild smoke.ts --bundle --platform=node --format=esm --outfile=smoke.mjs && node smoke.mjs",
     "deploy": "npm run build && wrangler deploy",
-    "cap:sync": "npm run build && npx cap sync ios",
+    "cap:sync": "npm run build && npx cap sync ios && node scripts/fix-ios-spm-paths.mjs",
     "cap:open:ios": "npx cap open ios",
-    "cap:copy": "npm run build && npx cap copy ios",
+    "cap:copy": "npm run build && npx cap copy ios && node scripts/fix-ios-spm-paths.mjs",
+    "cap:fix-spm": "node scripts/fix-ios-spm-paths.mjs",
     "store:seed": "esbuild scripts/seed-store-lease.ts --bundle --platform=node --format=esm --outfile=scripts/seed-store-lease.mjs && node scripts/seed-store-lease.mjs",
     "store:shots": "node scripts/capture-asc-screenshots.mjs",
     "store:shots:ci": "npm run store:seed && node scripts/capture-asc-screenshots.mjs --headless"
