@@ -63,3 +63,6 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-26 | Capacitor iOS scaffold in repo; native offline (no gate); privacy live |
 | 2026-07-26 | Store 1.0: iPhone-only + landscape; export/import JSON; ASC listing draft + smoke screenshots |
 | 2026-07-26 | Fixture-based ASC screenshots (6.7 + 6.5); human ASC checklist; age rating + privacy labels draft |
+| 2026-07-29 | PR #2 merged to main: iOS packaging, HUD polish, brand icons + landing; Cloudflare deploy workflow fixed (Node 22 + Wrangler 4) |
+| 2026-07-29 | Canonical iOS ship = local Mac Archive only; Xcode Cloud not configured (emails may be half-setup — disable workflow) |
+| 2026-07-29 | Deploy workflow documented in PATH_W_DEPLOY.md; Mac path + Xcode Cloud notes in IOS_MAC_SESSION.md |
