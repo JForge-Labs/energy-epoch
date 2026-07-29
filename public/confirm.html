@@ -18,17 +18,21 @@
     var msg = document.getElementById("msg"), go = document.getElementById("go");
     // Token is sanitised to the hex alphabet the server minted.
     var token = (new URLSearchParams(location.search).get("token") || "").replace(/[^a-f0-9]/g, "");
+    // Absolute post-login destinations — never relative "/".
+    // Apex "/" is the marketing landing; the game only lives on app.*.
+    var APP_HOME = "https://app.playenergyepoch.com/?signedin=1";
+    var ADMIN_HOME = "https://admin.playenergyepoch.com/";
     function consume() {
       msg.textContent = "Signing you in…";
       go.style.display = "none";
       // fetch() (not a form submit) so this is NOT a navigation request — a
       // navigation POST is intercepted by Cloudflare Assets (405) before the
-      // Worker runs. Same-origin credentials so the session cookie is stored.
+      // Worker runs. Credentials so the session cookie is stored.
       fetch("/api/auth/consume", {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: "token=" + token,
-        credentials: "same-origin",
+        credentials: "include",
       })
         .then(function (r) {
           if (!r.ok) return r.text().then(function (t) { throw new Error(t || "Sign-in failed"); });
@@ -39,10 +43,10 @@
           var onAdmin = location.hostname.indexOf("admin.") === 0;
           if (onAdmin || next === "admin") {
             msg.textContent = "Signed in! Opening admin…";
-            location.replace(onAdmin ? "/" : "https://admin.playenergyepoch.com/");
+            location.replace(ADMIN_HOME);
           } else {
             msg.textContent = "Signed in! Loading the game…";
-            location.replace("/?signedin=1");
+            location.replace(APP_HOME);
           }
         })
         .catch(function (e) {

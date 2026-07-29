@@ -1020,6 +1020,7 @@ async function ensureGamertag() {
   try {
     const r = await fetch("/api/profile", {
       method: "PUT",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name }),
     });
@@ -1042,7 +1043,7 @@ function showGate(show: boolean) {
 
 async function apiMe(): Promise<AuthState> {
   try {
-    const r = await fetch("/api/me");
+    const r = await fetch("/api/me", { credentials: "include" });
     if (r.status === 401) {
       account = null;
       refreshAccountUI();
@@ -1059,6 +1060,16 @@ async function apiMe(): Promise<AuthState> {
   }
 }
 
+/** After magic-link redirect, cookie can lag one tick — retry once before gating. */
+async function apiMeAfterSignIn(): Promise<AuthState> {
+  let state = await apiMe();
+  if (state === "out") {
+    await new Promise((r) => setTimeout(r, 200));
+    state = await apiMe();
+  }
+  return state;
+}
+
 // Debounced cloud push of the active profile's save blob (gzip'd).
 let cloudPushTimer = 0;
 function pushCloudSave() {
@@ -1070,6 +1081,7 @@ function pushCloudSave() {
       if (!raw) return;
       await fetch(`/api/saves/${encodeURIComponent(profiles.active)}`, {
         method: "PUT",
+        credentials: "include",
         headers: {
           "x-map": encodeURIComponent(game.config.mapName ?? "Prairie"),
           "x-save-version": String(SAVE_VERSION),
@@ -1087,7 +1099,7 @@ function pushCloudSave() {
 async function pullCloudSaves() {
   if (!account) return;
   try {
-    const r = await fetch("/api/saves");
+    const r = await fetch("/api/saves", { credentials: "include" });
     if (!r.ok) return;
     const { saves } = (await r.json()) as { saves: { slot: string; updatedAt: number }[] };
     let listChanged = false;
@@ -1097,7 +1109,9 @@ async function pullCloudSaves() {
       const localRaw = localStorage.getItem(key);
       const localTs = localRaw ? (JSON.parse(localRaw).updatedAt ?? 0) : -1;
       if (s.updatedAt <= localTs) continue;
-      const blobR = await fetch(`/api/saves/${encodeURIComponent(s.slot)}`);
+      const blobR = await fetch(`/api/saves/${encodeURIComponent(s.slot)}`, {
+        credentials: "include",
+      });
       if (!blobR.ok) continue;
       localStorage.setItem(key, await gunzip(await blobR.blob()));
       if (!profiles.names.includes(s.slot)) {
@@ -1120,7 +1134,7 @@ accountBtn.addEventListener("click", async () => {
   if (account) {
     if (window.confirm("Sign out? Local saves stay on this device.")) {
       try {
-        await fetch("/api/logout", { method: "POST" });
+        await fetch("/api/logout", { method: "POST", credentials: "include" });
       } catch {
         /* ignore */
       }
@@ -1135,6 +1149,7 @@ accountBtn.addEventListener("click", async () => {
   try {
     await fetch("/api/auth/request", {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email }),
     });
@@ -1150,23 +1165,26 @@ if (IS_NATIVE) {
   showGate(false); // offline app: no gate, no cloud, local saves only
   accountBtn.hidden = true;
   accountTag.hidden = true;
-} else
-  apiMe().then((state) => {
-  if (state === "in") {
-    showGate(false);
-    pullCloudSaves();
-    ensureGamertag();
-    if (new URLSearchParams(location.search).has("signedin")) {
-      flash(`Signed in as ${account?.name || account?.email}. Your games & maps now sync.`);
-      history.replaceState(null, "", location.pathname);
+} else {
+  const justSignedIn = new URLSearchParams(location.search).has("signedin");
+  const bootAuth = justSignedIn ? apiMeAfterSignIn() : apiMe();
+  bootAuth.then((state) => {
+    if (state === "in") {
+      showGate(false);
+      pullCloudSaves();
+      ensureGamertag();
+      if (justSignedIn) {
+        flash(`Signed in as ${account?.name || account?.email}. Your games & maps now sync.`);
+        history.replaceState(null, "", location.pathname);
+      }
+    } else if (state === "out") {
+      // Deployed, reachable, no session → require sign-in to play the full game.
+      showGate(true);
+    } else {
+      showGate(false); // offline / dev — keep playing locally.
     }
-  } else if (state === "out") {
-    // Deployed, reachable, no session → require sign-in to play the full game.
-    showGate(true);
-  } else {
-    showGate(false); // offline / dev — keep playing locally.
-  }
-});
+  });
+}
 
 // Gate sign-in form (mirrors the HUD Sign in flow, but blocking).
 const gateForm = document.querySelector<HTMLFormElement>("#gate-form")!;
@@ -1179,6 +1197,7 @@ gateForm.addEventListener("submit", async (e) => {
   try {
     await fetch("/api/auth/request", {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email }),
     });

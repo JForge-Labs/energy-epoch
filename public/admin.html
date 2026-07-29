@@ -561,8 +561,8 @@
           loginStatus.textContent = "Sending…";
           fetch("/api/auth/request", {
             method: "POST",
+            credentials: "include",
             headers: { "content-type": "application/json" },
-            credentials: "same-origin",
             body: JSON.stringify({ email: email, next: "admin" }),
           })
             .then(function (r) {

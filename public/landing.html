@@ -259,6 +259,7 @@
       try {
         await fetch("/api/auth/request", {
           method: "POST",
+          credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email }),
         });

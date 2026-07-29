@@ -166,10 +166,15 @@ export default {
         });
       };
 
+      // Magic-link landing — all hosts; confirm.html redirects to app./admin. absolutely.
+      if (
+        req.method === "GET" &&
+        (path === "/confirm" || path === "/confirm.html")
+      ) {
+        return staticHtml("/confirm.html");
+      }
+
       if (isAdmin && req.method === "GET") {
-        if (path === "/confirm" || path === "/confirm.html") {
-          return staticHtml("/confirm.html");
-        }
         // All other admin navigations → dashboard shell (auth checked in-page via API).
         if (path === "/" || path === "/admin" || path === "/admin.html" || path === "/index.html") {
           return staticHtml("/admin.html");
