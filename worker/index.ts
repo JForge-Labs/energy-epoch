@@ -206,7 +206,7 @@ export default {
             "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
             "cdn-cache-control": "no-store",
             "cloudflare-cdn-cache-control": "no-store",
-            "x-ee-build": "121c41f",
+            "x-ee-build": "532d9b9",
           },
         });
       };
