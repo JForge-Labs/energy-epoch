@@ -15,6 +15,8 @@ interface Env {
   RESEND_API_KEY: string;
   FROM_EMAIL: string;
   APP_URL: string;
+  /** Optional; defaults to https://admin.playenergyepoch.com */
+  ADMIN_URL?: string;
 }
 
 // Minimal shapes for the D1/R2 bindings (avoids a workers-types dependency).
@@ -36,6 +38,8 @@ interface R2 {
 const TOKEN_TTL_MS = 15 * 60 * 1000; // magic link valid 15 min
 const SESSION_TTL_MS = 60 * 24 * 3600 * 1000; // 60-day rolling session
 const COOKIE = "ee_sess";
+/** Only this account can view admin.playenergyepoch.com /api/admin/*. */
+const ADMIN_EMAIL = "john.fodchuk@gmail.com";
 const enc = new TextEncoder();
 
 async function sha256hex(s: string): Promise<string> {
@@ -59,12 +63,38 @@ function json(obj: unknown, status = 200, headers: Record<string, string> = {}):
     headers: { "content-type": "application/json", ...headers },
   });
 }
-function cookieHeader(id: string): string {
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+function requestHost(req: Request): string {
+  return (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
 }
-function clearCookieHeader(): string {
-  return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+/**
+ * Share session across app. / admin. / apex on production only.
+ * Intentional: admin dashboard and app share one login. Tradeoff: any
+ * *.playenergyepoch.com host can receive the cookie — keep subdomains trusted.
+ */
+function cookieDomainAttr(req: Request): string {
+  const host = requestHost(req);
+  // Only widen when the request is already on our known production hosts.
+  if (
+    host === "playenergyepoch.com" ||
+    host === "app.playenergyepoch.com" ||
+    host === "admin.playenergyepoch.com"
+  ) {
+    return "; Domain=.playenergyepoch.com";
+  }
+  return "";
+}
+function cookieHeader(id: string, req: Request): string {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}${cookieDomainAttr(req)}`;
+}
+function clearCookieHeader(req: Request): string {
+  return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0${cookieDomainAttr(req)}`;
+}
+function isAdminEmail(email: string): boolean {
+  return normEmail(email) === ADMIN_EMAIL;
+}
+function adminBase(env: Env): string {
+  return env.ADMIN_URL || "https://admin.playenergyepoch.com";
 }
 function getSessionId(req: Request): string | null {
   const raw = req.headers.get("cookie") ?? "";
@@ -115,33 +145,43 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
-    // Host split: the app subdomain serves the game SPA; the root/apex domain
-    // serves the marketing landing page (never the game bundle). /api/* is
-    // shared by both (the landing's Sign in and the app both call it).
+    // Host split:
+    //   app.*     → game SPA
+    //   admin.*   → admin dashboard (signups); gated by /api/admin/*
+    //   apex      → marketing landing (never the game bundle)
+    // /api/* shared across hosts.
     if (!url.pathname.startsWith("/api/")) {
-      // Prefer the Host header (correct in prod AND under `wrangler dev`, where
-      // url.hostname is just 127.0.0.1).
-      const host = (req.headers.get("host") ?? url.hostname).toLowerCase();
+      const host = requestHost(req);
       const isApp = host.startsWith("app.");
-      if (!isApp) {
-        // Landing domain. The apex root + /landing ALWAYS resolve to the
-        // marketing page, no-store, REGARDLESS of Accept/method — otherwise a
-        // non-navigation hit (bot / link prefetch) serves + edge-caches the game
-        // index at the apex, poisoning it for every visitor. Other static HTML
-        // (privacy) still passes through on a normal navigation.
-        const path = url.pathname.replace(/\/$/, "") || "/";
-        const landingHtml = async (asset: string) => {
-          const page = await env.ASSETS.fetch(new Request(new URL(asset, url).toString()));
-          return new Response(page.body, {
-            status: page.status,
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-              "cache-control": "no-store",
-            },
-          });
-        };
+      const isAdmin = host.startsWith("admin.");
+      const path = url.pathname.replace(/\/$/, "") || "/";
+      const staticHtml = async (asset: string) => {
+        const page = await env.ASSETS.fetch(new Request(new URL(asset, url).toString()));
+        return new Response(page.body, {
+          status: page.status,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      };
+
+      if (isAdmin && req.method === "GET") {
+        if (path === "/confirm" || path === "/confirm.html") {
+          return staticHtml("/confirm.html");
+        }
+        // All other admin navigations → dashboard shell (auth checked in-page via API).
+        if (path === "/" || path === "/admin" || path === "/admin.html" || path === "/index.html") {
+          return staticHtml("/admin.html");
+        }
+        // favicon etc.
+        return env.ASSETS.fetch(req);
+      }
+
+      if (!isApp && !isAdmin) {
+        // Landing domain: apex root always marketing; privacy is a real page.
         if (req.method === "GET" && (path === "/" || path === "/landing" || path === "/landing.html")) {
-          return landingHtml("/landing");
+          return staticHtml("/landing");
         }
         const accept = req.headers.get("accept") ?? "";
         if (
@@ -149,7 +189,7 @@ export default {
           accept.includes("text/html") &&
           (path === "/privacy" || path === "/privacy.html")
         ) {
-          return landingHtml("/privacy.html");
+          return staticHtml("/privacy.html");
         }
       }
       return env.ASSETS.fetch(req);
@@ -158,12 +198,18 @@ export default {
     try {
       const now = Date.now();
 
-      // --- POST /api/auth/request { email } -> mint token + email link ---
+      // --- POST /api/auth/request { email, next? } -> mint token + email link ---
+      // next: "admin" → magic link lands on admin.playenergyepoch.com
       if (url.pathname === "/api/auth/request" && req.method === "POST") {
-        const body = (await req.json().catch(() => ({}))) as { email?: string };
+        const body = (await req.json().catch(() => ({}))) as {
+          email?: string;
+          next?: string;
+        };
         const email = normEmail(body.email);
+        const nextAdmin = body.next === "admin";
         // Enumeration-safe: always return 200, regardless of validity.
-        if (validEmail(email)) {
+        // Admin flow: only ever email the allowlisted operator.
+        if (validEmail(email) && (!nextAdmin || isAdminEmail(email))) {
           const token = randHex(32);
           const hash = await sha256hex(token);
           await env.DB.prepare(
@@ -172,11 +218,9 @@ export default {
           )
             .bind(hash, email, now + TOKEN_TTL_MS, now)
             .run();
-          // Link points at the STATIC /confirm page (Cloudflare Assets serves
-          // that for the navigation click); that page fetch()es /api/auth/consume
-          // — a non-navigation POST that actually reaches this Worker (a form
-          // submit would be a navigation POST → Assets 405s it).
-          const link = `${env.APP_URL}/confirm?token=${token}`;
+          // Link points at the STATIC /confirm page; that page fetch()es consume.
+          const base = nextAdmin ? adminBase(env) : env.APP_URL;
+          const link = `${base}/confirm?token=${token}${nextAdmin ? "&next=admin" : ""}`;
           await sendMagicLink(env, email, link).catch(() => {});
         }
         return json({ ok: true });
@@ -222,14 +266,16 @@ export default {
           .bind(await sha256hex(sid), user.id, now + SESSION_TTL_MS, now)
           .run();
         // JSON (not a 302) — the caller is a fetch() from /confirm; the browser
-        // still applies Set-Cookie, then the page redirects into the game.
-        return json({ ok: true }, 200, { "set-cookie": cookieHeader(sid) });
+        // still applies Set-Cookie, then the page redirects into the game/admin.
+        return json({ ok: true }, 200, { "set-cookie": cookieHeader(sid, req) });
       }
 
       // --- GET /api/me ---
       if (url.pathname === "/api/me" && req.method === "GET") {
         const u = await currentUser(req, env);
-        return u ? json({ email: u.email, name: u.name }) : json({ error: "unauthorized" }, 401);
+        return u
+          ? json({ email: u.email, name: u.name, admin: isAdminEmail(u.email) })
+          : json({ error: "unauthorized" }, 401);
       }
 
       // --- POST /api/logout ---
@@ -240,7 +286,61 @@ export default {
             .bind(await sha256hex(sid))
             .run();
         }
-        return json({ ok: true }, 200, { "set-cookie": clearCookieHeader() });
+        return json({ ok: true }, 200, { "set-cookie": clearCookieHeader(req) });
+      }
+
+      // --- GET /api/admin/signups — operator only ---
+      if (url.pathname === "/api/admin/signups" && req.method === "GET") {
+        const u = await currentUser(req, env);
+        if (!u || !isAdminEmail(u.email)) {
+          return json({ error: "forbidden" }, 403);
+        }
+        const weekAgo = now - 7 * 24 * 3600 * 1000;
+        const dayAgo = now - 24 * 3600 * 1000;
+        const totals = await env.DB.prepare(
+          `SELECT
+             (SELECT COUNT(*) FROM users) AS total,
+             (SELECT COUNT(*) FROM users WHERE created_at >= ?) AS week,
+             (SELECT COUNT(*) FROM users WHERE created_at >= ?) AS day,
+             (SELECT COUNT(*) FROM users WHERE last_login >= ?) AS activeWeek,
+             (SELECT COUNT(*) FROM saves) AS saves
+          `,
+        )
+          .bind(weekAgo, dayAgo, weekAgo)
+          .first<{
+            total: number;
+            week: number;
+            day: number;
+            activeWeek: number;
+            saves: number;
+          }>();
+
+        const rows = await env.DB.prepare(
+          `SELECT u.id, u.email, u.name, u.created_at AS createdAt, u.last_login AS lastLogin,
+                  (SELECT COUNT(*) FROM saves s WHERE s.user_id = u.id) AS saveCount
+             FROM users u
+            ORDER BY u.created_at DESC
+            LIMIT 500`,
+        ).all<{
+          id: string;
+          email: string;
+          name: string | null;
+          createdAt: number;
+          lastLogin: number | null;
+          saveCount: number;
+        }>();
+
+        return json({
+          stats: {
+            total: totals?.total ?? 0,
+            week: totals?.week ?? 0,
+            day: totals?.day ?? 0,
+            activeWeek: totals?.activeWeek ?? 0,
+            saves: totals?.saves ?? 0,
+          },
+          users: rows.results ?? [],
+          generatedAt: now,
+        });
       }
 
       // --- PUT /api/profile { name } ---

@@ -5,7 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Energy Epoch — build an oil &amp; energy empire</title>
 <meta name="description" content="Energy Epoch is a real-time oil &amp; energy operations sim. Drill wildcat wells, lay pipe, run the logistics, and ride the market. Play free in your browser." />
-<link rel="icon" href="/favicon.svg" />
+<meta property="og:title" content="Energy Epoch — build an oil &amp; energy empire" />
+<meta property="og:description" content="Real-time oil &amp; energy ops sim. Drill wildcats, lay pipe, run logistics, ride the market. Free in your browser." />
+<meta property="og:image" content="https://playenergyepoch.com/app-icon-512.png" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="https://playenergyepoch.com/app-icon-512.png" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+<link rel="icon" type="image/png" href="/favicon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <style>
   :root {
     --bg: #0d1109; --panel: #141a11; --ink: #e8ece6; --muted: #9aa392;
@@ -28,7 +37,16 @@
     display: flex; align-items: center; justify-content: space-between;
     padding: 18px 20px; max-width: 1080px; margin: 0 auto;
   }
-  .brand { font-weight: 800; letter-spacing: 0.06em; font-size: 1.05rem; }
+  .brand {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-weight: 800; letter-spacing: 0.06em; font-size: 1.05rem;
+    text-decoration: none;
+  }
+  .brand-mark {
+    width: 40px; height: 40px; border-radius: 10px; object-fit: cover;
+    box-shadow: 0 0 0 1px var(--line), 0 0 22px rgba(212, 160, 23, 0.28);
+    flex-shrink: 0;
+  }
   .brand .dot { color: var(--gold); }
   .btn {
     font: inherit; font-weight: 700; cursor: pointer;
@@ -43,6 +61,14 @@
 
   .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; padding: 30px 0 50px; }
   @media (max-width: 820px) { .hero { grid-template-columns: 1fr; gap: 26px; } }
+  .hero-mark {
+    width: 112px; height: 112px; border-radius: 24px; object-fit: cover;
+    margin: 0 0 18px;
+    box-shadow:
+      0 0 0 1px var(--line),
+      0 12px 40px rgba(0, 0, 0, 0.45),
+      0 0 48px rgba(212, 160, 23, 0.22);
+  }
   h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.05; margin: 0 0 14px; letter-spacing: -0.01em; }
   h1 .accent { color: var(--gold); }
   .lede { color: var(--muted); font-size: 1.12rem; margin: 0 0 24px; max-width: 42ch; }
@@ -80,7 +106,12 @@
   .card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
   .card .ico { font-size: 1.4rem; }
 
-  footer { color: var(--muted); font-size: 0.85rem; padding: 24px 0 40px; border-top: 1px solid rgba(255,255,255,0.06); }
+  footer {
+    color: var(--muted); font-size: 0.85rem; padding: 24px 0 40px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  footer .brand-mark { width: 28px; height: 28px; border-radius: 7px; }
 
   /* Sign-in modal */
   .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; place-items: center; padding: 20px; z-index: 50; }
@@ -99,13 +130,25 @@
 </head>
 <body>
   <header>
-    <div class="brand">ENERGY EPOCH<span class="dot">.</span></div>
+    <a class="brand" href="/landing">
+      <img class="brand-mark" src="/app-icon-512.png" width="40" height="40" alt="" decoding="async" />
+      <span>ENERGY EPOCH<span class="dot">.</span></span>
+    </a>
     <button class="btn" id="signin-top">Sign in</button>
   </header>
 
   <main class="wrap">
     <section class="hero">
       <div>
+        <img
+          class="hero-mark"
+          src="/app-icon-512.png"
+          width="112"
+          height="112"
+          alt="Energy Epoch app icon — glowing wordmark on a dark honeycomb field"
+          decoding="async"
+          fetchpriority="high"
+        />
         <h1>Strike oil. Build the <span class="accent">whole operation.</span></h1>
         <p class="lede">A real-time oil &amp; energy ops sim. Drill wildcat wells, lay pipe, run trucks and batteries, tame the flare, and ride a live market — from one lonely rig to an energy empire.</p>
         <div class="cta-row">
@@ -180,7 +223,10 @@
       <div class="card"><div class="ico">⚙️</div><h3>Easy or Hard</h3><p>Learn on Easy, then switch to Hard for interest, shut-in risk, and real bankruptcy.</p></div>
     </section>
 
-    <footer class="wrap">© Energy Epoch · Sign in to save your maps and games across devices.</footer>
+    <footer class="wrap">
+      <img class="brand-mark" src="/app-icon-512.png" width="28" height="28" alt="" decoding="async" />
+      <span>© Energy Epoch · Sign in to save your maps and games across devices.</span>
+    </footer>
   </main>
 
   <div class="modal-back" id="modal-back">

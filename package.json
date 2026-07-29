@@ -11,10 +11,14 @@
     "deploy": "npm run build && wrangler deploy",
     "cap:sync": "npm run build && npx cap sync ios",
     "cap:open:ios": "npx cap open ios",
-    "cap:copy": "npm run build && npx cap copy ios"
+    "cap:copy": "npm run build && npx cap copy ios",
+    "store:seed": "esbuild scripts/seed-store-lease.ts --bundle --platform=node --format=esm --outfile=scripts/seed-store-lease.mjs && node scripts/seed-store-lease.mjs",
+    "store:shots": "node scripts/capture-asc-screenshots.mjs",
+    "store:shots:ci": "npm run store:seed && node scripts/capture-asc-screenshots.mjs --headless"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
+    "playwright": "^1.62.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "wrangler": "^4.0.0"

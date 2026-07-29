@@ -13,9 +13,10 @@ workers_dev = true
 # (or add the domain via the dashboard) and redeploy.
 routes = [
   { pattern = "playenergyepoch.com", custom_domain = true },
-  # The game app. Provisions the DNS + TLS on deploy. Magic-link + session land
-  # here (see APP_URL), so the session cookie is scoped to the app subdomain.
+  # The game app. Magic-link + session land here (see APP_URL).
   { pattern = "app.playenergyepoch.com", custom_domain = true },
+  # Operator dashboard (signups). Gated to ADMIN_EMAIL in worker/index.ts.
+  { pattern = "admin.playenergyepoch.com", custom_domain = true },
 ]
 
 # The Worker runs first on every request and serves static assets via ASSETS
@@ -33,6 +34,7 @@ run_worker_first = true
 # The game lives on the app subdomain; magic-link verify/consume + the session
 # cookie all resolve here. The apex domain is the marketing landing page.
 APP_URL = "https://app.playenergyepoch.com"
+ADMIN_URL = "https://admin.playenergyepoch.com"
 # Must equal the Resend-verified domain (confirmed: playenergyepoch.com).
 FROM_EMAIL = "landman@playenergyepoch.com"
 # Secret (set out-of-band, never committed): RESEND_API_KEY

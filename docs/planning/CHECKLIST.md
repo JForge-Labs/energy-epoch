@@ -21,15 +21,19 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | S2 | Reliable static deploy + correct `base` `/` | done | Cloudflare Worker: https://playenergyepoch.com |
 | S2b | Auto-deploy tracks active branch | done | CF/GitHub Actions (not Railway) |
 | S3 | Phone playtest on deployed URL | done | playenergyepoch.com |
-| S4 | PWA install + offline session | todo | |
-| S5 | Save export/import JSON | todo | Before stores |
+| S4 | PWA install + offline session | todo | Nice-to-have; not required for Store |
+| S5 | Save export/import JSON | done | Export/Import buttons in HUD (v4 save JSON) |
 | S6 | Capacitor Android APK | todo | After or parallel with iOS |
 | S7 | iOS App Store (Capacitor) | doing | See IOS_APP_STORE.md; $99/yr approved |
-| S7a | Apple Developer enroll + Mac/Xcode | todo | Human |
-| S7b | Capacitor iOS scaffold | todo | After polish gates |
-| S7c | TestFlight internal | todo | |
-| S7d | App Store submission | todo | |
+| S7a | Apple Developer enroll + Mac/Xcode | todo | Human — ASC app record + Mac archive |
+| S7b | Capacitor iOS scaffold | done | `ios/`, bundle `com.playenergyepoch.app`, iPhone landscape-only 1.0 |
+| S7c | TestFlight internal | todo | Needs Mac session (IOS_MAC_SESSION.md) |
+| S7d | App Store submission | todo | Copy + shots ready; binary needs Mac + ASC app record |
 | S8 | Custom domain | done | playenergyepoch.com on Cloudflare |
+| S9 | Privacy policy URL live | done | https://playenergyepoch.com/privacy |
+| S10 | ASC listing copy draft | done | `docs/planning/IOS_ASC_LISTING_1.0.md` + age/privacy nutrition |
+| S11 | ASC screenshots (Windows) | done | Fixture mid-game: 8× 6.7" + 8× 6.5" landscape; `npm run store:shots:ci` |
+| S12 | ASC human portal setup | todo | `docs/planning/IOS_ASC_HUMAN.md` — Bundle ID + New App + upload media |
 
 ## Path U — only after trigger
 
@@ -56,3 +60,6 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-24 | Cloudflare Worker primary host: playenergyepoch.com |
 | 2026-07-24 | Railway project `steadfast-determination` decommissioned; removed railway.toml + serve; docs point at Cloudflare |
 | 2026-07-25 | iOS App Store planning active: Capacitor path, Apple $99/yr approved; see IOS_APP_STORE.md |
+| 2026-07-26 | Capacitor iOS scaffold in repo; native offline (no gate); privacy live |
+| 2026-07-26 | Store 1.0: iPhone-only + landscape; export/import JSON; ASC listing draft + smoke screenshots |
+| 2026-07-26 | Fixture-based ASC screenshots (6.7 + 6.5); human ASC checklist; age rating + privacy labels draft |

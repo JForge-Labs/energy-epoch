@@ -15,6 +15,11 @@ dist-ssr
 # Smoke-test bundle output (source is smoke.ts, run via `npm test`)
 smoke.mjs
 
+# Playwright local session from store screenshot runs
+store-assets/ios/screenshots/.auth-state.json
+# esbuild scratch for store seed (source is seed-store-lease.ts)
+scripts/seed-store-lease.mjs
+
 # Cloudflare / Wrangler local state
 .wrangler
 .dev.vars

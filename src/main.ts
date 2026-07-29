@@ -1,6 +1,23 @@
 import "./styles.css";
+import { Capacitor } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import { clampCamera, createCamera, screenToWorld } from "./game/camera";
-import { Game } from "./game/Game";
+import { Game, type GameSnapshot } from "./game/Game";
+
+// The packaged iOS/Android app bundles dist/ and has no backend origin, so
+// accounts/cloud saves don't apply — run offline with local saves only.
+// ?store=1 forces the same shell for App Store screenshot capture (web).
+const IS_NATIVE =
+  Capacitor.isNativePlatform() ||
+  new URLSearchParams(location.search).has("store");
+
+/** Light tap feedback on native (Done / tool release). No-op on web. */
+function lightHaptic(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {
+    /* plugin unavailable in some shells */
+  });
+}
 import {
   ADD_TANK_COST,
   BATTERY_COST,
@@ -55,24 +72,32 @@ app.innerHTML = `
         <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
         <div title="Live crude price ($/bbl).">Oil <strong id="stat-oil">$0</strong></div>
       </div>
-      <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats" aria-label="More stats">⋯</button>
+      <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats (Debt, interest, oil price)" aria-label="More stats">▾</button>
       <button type="button" class="metrics-toggle" id="inspect-toggle" title="Inspect tooltip (press I) — hover tiles for details" aria-label="Toggle inspect tooltip">ⓘ</button>
+    </div>
+    <div class="hud-controls">
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
         <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
         <button type="button" class="spd-btn active" data-spd="1">1×</button>
         <button type="button" class="spd-btn" data-spd="2">2×</button>
       </div>
-    </div>
-    <div class="hud-actions">
-      <span id="account-tag" class="account-tag" hidden></span>
-      <button type="button" class="tool-btn" id="btn-account" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
-      <button type="button" class="tool-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
-      <select id="profile-select" class="profile-select" title="Save profile"></select>
-      <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
-      <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
-      <button type="button" class="tool-btn" id="btn-home">Home</button>
-      <button type="button" class="tool-btn" id="btn-reset">Reset lease</button>
+      <div class="hud-menu-wrap">
+        <button type="button" class="metrics-toggle hud-menu-btn" id="hud-menu-btn" title="Mode, profiles, lease & save" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="hud-menu">⋯</button>
+        <div class="hud-menu" id="hud-menu" role="menu" hidden>
+          <span id="account-tag" class="account-tag hud-menu-tag" hidden></span>
+          <button type="button" class="hud-menu-item" id="btn-account" role="menuitem" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
+          <button type="button" class="hud-menu-item" id="btn-hard" role="menuitem" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
+          <div class="hud-menu-sep" role="separator"></div>
+          <label class="hud-menu-label" for="profile-select">Profile / map save</label>
+          <select id="profile-select" class="profile-select hud-menu-select" title="Save profile"></select>
+          <button type="button" class="hud-menu-item" id="btn-new-profile" role="menuitem" title="New profile">+ New profile</button>
+          <button type="button" class="hud-menu-item danger" id="btn-del-profile" role="menuitem" title="Delete this profile">Delete profile</button>
+          <div class="hud-menu-sep" role="separator"></div>
+          <button type="button" class="hud-menu-item" id="btn-home" role="menuitem">Home (recenter)</button>
+          <button type="button" class="hud-menu-item danger" id="btn-reset" role="menuitem">Reset lease…</button>
+        </div>
+      </div>
     </div>
   </header>
   <div class="stage-wrap">
@@ -123,8 +148,12 @@ app.innerHTML = `
       </div>
     </div>
     <div class="map-picker" id="map-picker" hidden>
-      <div class="map-picker-card">
-        <h2>Choose your lease</h2>
+      <div class="map-picker-card" role="dialog" aria-modal="true" aria-labelledby="map-picker-title">
+        <div class="map-picker-head">
+          <h2 id="map-picker-title">Choose your lease</h2>
+          <button type="button" class="map-picker-x" id="map-picker-close" aria-label="Cancel map selection">✕</button>
+        </div>
+        <p class="map-picker-hint" id="map-picker-hint">Pick a map preset, or ✕ to keep your current lease.</p>
         <div class="map-list" id="map-list"></div>
       </div>
     </div>
@@ -143,11 +172,13 @@ app.innerHTML = `
   </div>
   <footer class="bottom-bar" id="bottom-bar" data-collapsed="false">
     <div class="dock-rail" id="dock-rail">
-      <button class="tool-btn tool-dock active" id="tool-dock" data-tool="select" type="button" aria-pressed="false">
-        <span class="dock-mark" id="dock-mark">●</span>
-        <span class="dock-name" id="dock-name">Select</span>
-        <span class="dock-hint" id="dock-hint">tap a tile to inspect</span>
-        <span class="dock-x" aria-hidden="true">✕ Done</span>
+      <button class="tool-btn tool-dock active" id="tool-dock" data-tool="select" type="button" aria-pressed="false" aria-label="Select tool">
+        <span class="dock-lead">
+          <span class="dock-mark" id="dock-mark">●</span>
+          <span class="dock-name" id="dock-name">Select</span>
+          <span class="dock-hint" id="dock-hint">tap a tile to inspect</span>
+        </span>
+        <span class="dock-x" aria-hidden="true">Done</span>
       </button>
       <div class="tool-tabs" id="tool-tabs" role="tablist">
         <button class="tool-tab active" data-tab="actions" role="tab" type="button">Actions</button>
@@ -551,14 +582,16 @@ function setActiveTool(tool: BuildTool) {
   updateToolDock();
 }
 
-function disarmToSelect() {
+function disarmToSelect(opts?: { haptic?: boolean }) {
+  const wasArmed = game.tool !== "select";
   setActiveTool("select");
+  if (opts?.haptic && wasArmed) lightHaptic();
 }
 
 // --- Command Dock: Select IS the universal tool-release control -------------
 // Latched tools stay armed after use (repeated place / toggle / pathing); the
-// Dock morphs in place to show the held tool + a big "✕ Done" so dropping it is
-// one obvious tap — the fix for "releasing a latched tool is unintuitive".
+// Dock morphs in place to show the held tool + a big "Done" so dropping it is
+// one obvious tap. When armed, CSS collapses tabs + chips (tool-active mode).
 const LATCHED = new Set<BuildTool>([
   "road", "crude_pipe", "clean_pipe", "gas_pipe", "sell", "choke", "move_rig", "drill", "explore",
 ]);
@@ -567,6 +600,8 @@ const TOOL_LABEL: Record<string, string> = {
   explore: "Explore", add_tank: "Tank", gas_line: "Incinerator", road: "Road",
   crude_pipe: "Crude pipe", clean_pipe: "Clean pipe", gas_pipe: "Gas pipe", battery: "Battery",
   gas_plant: "Gas Refinery", refinery: "Refinery", sell: "Sell",
+  truck: "Truck", small_truck: "Truck 200", upgrade_rig: "Rig+",
+  pay_debt: "Pay debt", draw_credit: "Draw credit", buy_permit: "Permit",
 };
 const TOOL_HINT: Record<string, string> = {
   select: "tap a tile to inspect", drill: "tap tiles to queue wells",
@@ -583,14 +618,21 @@ function updateToolDock() {
   const dock = document.getElementById("tool-dock");
   if (!dock) return;
   const armed = game.tool !== "select";
+  const label = TOOL_LABEL[game.tool] ?? game.tool;
   window.clearTimeout(dockTimer);
   dock.classList.remove("placed");
   dock.classList.toggle("armed", armed);
   dock.setAttribute("aria-pressed", String(armed));
+  dock.setAttribute(
+    "aria-label",
+    armed ? `${label} active — tap Done to return to Select` : "Select tool",
+  );
   document.getElementById("bottom-bar")?.classList.toggle("tool-armed", armed);
   document.getElementById("dock-mark")!.textContent = armed ? "◉" : "●";
-  document.getElementById("dock-name")!.textContent = TOOL_LABEL[game.tool] ?? game.tool;
+  document.getElementById("dock-name")!.textContent = label;
   document.getElementById("dock-hint")!.textContent = TOOL_HINT[game.tool] ?? "";
+  const dockX = dock.querySelector(".dock-x");
+  if (dockX) dockX.setAttribute("aria-hidden", armed ? "false" : "true");
 }
 // Brief "✓ placed → Select" pulse so a one-shot tool's auto-return is *seen*.
 function flashDockPlaced() {
@@ -648,70 +690,94 @@ function saveProfiles() {
 saveProfiles();
 const activeSaveKey = () => `${SAVE_PREFIX}:${profiles.active}`;
 
+/** Flat save blob written to localStorage / export files / cloud. */
+function buildSavePayload() {
+  return {
+    v: SAVE_VERSION,
+    updatedAt: Date.now(),
+    cam,
+    spd: currentSpeed,
+    mode: game.mode,
+    map: {
+      name: game.config.mapName ?? "Prairie",
+      seed: game.config.seed,
+      cols: game.config.cols,
+      rows: game.config.rows,
+      params: game.config.mapParams,
+    },
+    game: game.serialize(),
+  };
+}
+
 function saveGame() {
   try {
-    localStorage.setItem(
-      activeSaveKey(),
-      JSON.stringify({
-        v: SAVE_VERSION,
-        updatedAt: Date.now(),
-        cam,
-        spd: currentSpeed,
-        mode: game.mode,
-        map: {
-          name: game.config.mapName ?? "Prairie",
-          seed: game.config.seed,
-          cols: game.config.cols,
-          rows: game.config.rows,
-          params: game.config.mapParams,
-        },
-        game: game.serialize(),
-      }),
-    );
+    localStorage.setItem(activeSaveKey(), JSON.stringify(buildSavePayload()));
     pushCloudSave();
   } catch {
     // storage full / unavailable — non-fatal, game keeps running in memory
   }
 }
 
+/** Apply a parsed save snapshot. Returns false if structurally invalid. */
+function applySaveSnapshot(snap: {
+  v?: number;
+  game?: unknown;
+  cam?: { x: number; y: number; zoom: number };
+  spd?: number;
+  mode?: string;
+  intOn?: boolean;
+  map?: {
+    name?: string;
+    seed?: number;
+    cols?: number;
+    rows?: number;
+    params?: unknown;
+  };
+}): boolean {
+  if (snap.v !== SAVE_VERSION || !snap.game || typeof snap.game !== "object") {
+    return false;
+  }
+  // Validity guard: reject only structurally-broken grids. Any well-formed
+  // grid loads regardless of size — applyState syncs config to the saved
+  // lease, so a save made on the old 56×36 map still opens (and survives).
+  const t = (snap.game as { tiles?: unknown }).tiles;
+  if (
+    !Array.isArray(t) ||
+    t.length === 0 ||
+    !Array.isArray(t[0]) ||
+    t[0].length === 0
+  ) {
+    return false;
+  }
+  game.applyState(snap.game as GameSnapshot);
+  if (snap.cam) {
+    cam.x = snap.cam.x;
+    cam.y = snap.cam.y;
+    cam.zoom = snap.cam.zoom;
+    clampCamera(cam, game.config.cols, game.config.rows);
+  }
+  // Restore speed, but never load into a frozen (paused) sim.
+  if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
+  // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
+  if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
+  else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
+  // Map identity (tiles themselves come from applyState; this is for display
+  // + the cloud). config is mutable field-wise even though the ref is readonly.
+  if (snap.map) {
+    if (snap.map.name) game.config.mapName = snap.map.name;
+    if (typeof snap.map.seed === "number") game.config.seed = snap.map.seed;
+    if (snap.map.params) {
+      game.config.mapParams = snap.map.params as typeof game.config.mapParams;
+    }
+  }
+  return true;
+}
+
 function loadGame(): boolean {
   try {
     const raw = localStorage.getItem(activeSaveKey());
     if (!raw) return false;
-    const snap = JSON.parse(raw);
-    if (snap.v !== SAVE_VERSION || !snap.game) return false;
-    // Validity guard: reject only structurally-broken grids. Any well-formed
-    // grid loads regardless of size — applyState syncs config to the saved
-    // lease, so a save made on the old 56×36 map still opens (and survives).
-    const t = snap.game.tiles;
-    if (
-      !Array.isArray(t) ||
-      t.length === 0 ||
-      !Array.isArray(t[0]) ||
-      t[0].length === 0
-    ) {
-      return false;
-    }
-    game.applyState(snap.game);
-    if (snap.cam) {
-      cam.x = snap.cam.x;
-      cam.y = snap.cam.y;
-      cam.zoom = snap.cam.zoom;
-      clampCamera(cam, game.config.cols, game.config.rows);
-    }
-    // Restore speed, but never load into a frozen (paused) sim.
-    if (typeof snap.spd === "number") setSpeed(snap.spd === 0 ? 1 : snap.spd);
-    // Difficulty: prefer the new `mode`; migrate legacy `intOn` (true → hard).
-    if (snap.mode === "easy" || snap.mode === "hard") game.mode = snap.mode;
-    else if (typeof snap.intOn === "boolean") game.mode = snap.intOn ? "hard" : "easy";
-    // Map identity (tiles themselves come from applyState; this is for display
-    // + the cloud). config is mutable field-wise even though the ref is readonly.
-    if (snap.map) {
-      game.config.mapName = snap.map.name;
-      game.config.seed = snap.map.seed;
-      game.config.mapParams = snap.map.params;
-    }
-    return true;
+    return applySaveSnapshot(JSON.parse(raw));
   } catch {
     return false;
   }
@@ -723,7 +789,11 @@ function loadGame(): boolean {
 // game.timeScale to 0, but keep `currentSpeed` as the player's chosen speed
 // so it (including a player-chosen pause of 0) is restored on release.
 function decisionHeld(): boolean {
-  return pendingConfirm !== null || !ledgerModal.hidden;
+  return (
+    pendingConfirm !== null ||
+    !ledgerModal.hidden ||
+    !mapPickerEl.hidden
+  );
 }
 
 function applyTimeHold() {
@@ -772,8 +842,24 @@ function bootGame(restore: boolean, config?: Partial<GameConfig>): boolean {
 }
 
 const mapPickerEl = document.querySelector<HTMLDivElement>("#map-picker")!;
-// Show the map picker and start a fresh lease with the chosen preset.
-function showMapPicker(onPick: (cfg: Partial<GameConfig>) => void) {
+const mapPickerClose = document.querySelector<HTMLButtonElement>("#map-picker-close")!;
+const mapPickerHint = document.querySelector<HTMLElement>("#map-picker-hint")!;
+/** Optional cancel path while the lease map sheet is open (Reset / accidental open). */
+let mapPickerOnCancel: (() => void) | null = null;
+
+function hideMapPicker() {
+  if (mapPickerEl.hidden) return;
+  mapPickerEl.hidden = true;
+  mapPickerOnCancel = null;
+  applyTimeHold();
+}
+
+/** Show map presets. Cancel (✕ / backdrop) keeps the current lease unless first-run forces a pick. */
+function showMapPicker(
+  onPick: (cfg: Partial<GameConfig>) => void,
+  opts?: { cancellable?: boolean; hint?: string },
+) {
+  const cancellable = opts?.cancellable !== false;
   const list = document.querySelector<HTMLDivElement>("#map-list")!;
   list.innerHTML = "";
   for (const p of MAP_PRESETS) {
@@ -782,21 +868,51 @@ function showMapPicker(onPick: (cfg: Partial<GameConfig>) => void) {
     card.className = "map-choice";
     card.innerHTML = `<strong>${p.name}</strong><span>${p.blurb}</span>`;
     card.addEventListener("click", () => {
-      mapPickerEl.hidden = true;
+      hideMapPicker();
       onPick(presetToConfig(p));
     });
     list.appendChild(card);
   }
+  mapPickerClose.hidden = !cancellable;
+  mapPickerEl.dataset.cancellable = String(cancellable);
+  mapPickerHint.textContent = cancellable
+    ? (opts?.hint ?? "Pick a map preset, or ✕ / tap outside to cancel.")
+    : (opts?.hint ?? "Pick a map preset to start this lease.");
+  mapPickerOnCancel = cancellable
+    ? () => {
+        hideMapPicker();
+        flash("Map selection cancelled — current lease unchanged.");
+      }
+    : null;
   mapPickerEl.hidden = false;
+  applyTimeHold();
 }
 
+mapPickerClose.addEventListener("click", (e) => {
+  e.stopPropagation();
+  mapPickerOnCancel?.();
+});
+// Tap dimmed backdrop to cancel (not the card).
+mapPickerEl.addEventListener("click", (e) => {
+  if (e.target === mapPickerEl) mapPickerOnCancel?.();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !mapPickerEl.hidden) mapPickerOnCancel?.();
+});
+
 function resetLease() {
-  showMapPicker((cfg) => {
-    localStorage.removeItem(activeSaveKey());
-    bootGame(false, cfg);
-    flash(`New ${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
-    saveGame();
-  });
+  showMapPicker(
+    (cfg) => {
+      localStorage.removeItem(activeSaveKey());
+      bootGame(false, cfg);
+      flash(`New ${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+      saveGame();
+    },
+    {
+      cancellable: true,
+      hint: "Reset wipes this profile’s save. Pick a map, or ✕ to keep playing.",
+    },
+  );
 }
 
 function refreshProfileUI() {
@@ -828,16 +944,25 @@ function newProfile() {
     switchProfile(name);
     return;
   }
-  saveGame(); // persist current before creating the new one
-  profiles.names.push(name);
-  profiles.active = name;
-  saveProfiles();
-  refreshProfileUI();
-  showMapPicker((cfg) => {
-    bootGame(false, cfg);
-    saveGame();
-    flash(`Created "${name}" on ${cfg.mapName}.`);
-  });
+  // Persist the current lease first, but do NOT switch profiles until a map is
+  // picked. Committing early made cancel leave activeSaveKey() on an empty slot
+  // while the in-memory game was still the previous lease (autosaves went wrong).
+  saveGame();
+  showMapPicker(
+    (cfg) => {
+      profiles.names.push(name);
+      profiles.active = name;
+      saveProfiles();
+      refreshProfileUI();
+      bootGame(false, cfg);
+      saveGame();
+      flash(`Created "${name}" on ${cfg.mapName}.`);
+    },
+    {
+      cancellable: true,
+      hint: `New profile "${name}" — pick a starting map, or ✕ to cancel (no profile created).`,
+    },
+  );
 }
 
 function deleteProfile() {
@@ -1020,7 +1145,13 @@ accountBtn.addEventListener("click", async () => {
 });
 
 // On load: check the session and either open the game, gate it, or fail open.
-apiMe().then((state) => {
+// Native app: skip auth entirely — offline, local saves, no gate, no cloud.
+if (IS_NATIVE) {
+  showGate(false); // offline app: no gate, no cloud, local saves only
+  accountBtn.hidden = true;
+  accountTag.hidden = true;
+} else
+  apiMe().then((state) => {
   if (state === "in") {
     showGate(false);
     pullCloudSaves();
@@ -1058,6 +1189,37 @@ gateForm.addEventListener("submit", async (e) => {
   }
 });
 
+// --- Top-bar overflow menu (Export / Import / Home / profiles / …) ----------
+const hudMenuBtn = document.querySelector<HTMLButtonElement>("#hud-menu-btn")!;
+const hudMenu = document.querySelector<HTMLDivElement>("#hud-menu")!;
+function closeHudMenu() {
+  hudMenu.hidden = true;
+  hudMenuBtn.setAttribute("aria-expanded", "false");
+}
+function toggleHudMenu() {
+  const open = hudMenu.hidden;
+  hudMenu.hidden = !open;
+  hudMenuBtn.setAttribute("aria-expanded", String(open));
+}
+hudMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleHudMenu();
+});
+document.addEventListener("click", (e) => {
+  if (hudMenu.hidden) return;
+  const t = e.target as Node;
+  if (hudMenu.contains(t) || hudMenuBtn.contains(t)) return;
+  closeHudMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !hudMenu.hidden) closeHudMenu();
+});
+// Close after a menu action (keep open for profile <select>).
+hudMenu.addEventListener("click", (e) => {
+  const el = (e.target as HTMLElement).closest("button");
+  if (el && el.id !== "hud-menu-btn") closeHudMenu();
+});
+
 document.querySelector("#btn-home")!.addEventListener("click", () => {
   const p = game.recenterHint();
   cam.x = p.x;
@@ -1070,6 +1232,7 @@ document.querySelector("#btn-reset-go")!.addEventListener("click", resetLease);
 
 document.querySelector("#profile-select")!.addEventListener("change", (e) => {
   switchProfile((e.target as HTMLSelectElement).value);
+  closeHudMenu();
 });
 document.querySelector("#btn-new-profile")!.addEventListener("click", newProfile);
 document.querySelector("#btn-del-profile")!.addEventListener("click", deleteProfile);
@@ -1199,9 +1362,15 @@ document.getElementById("tabbar-caret")?.addEventListener("click", () => {
 
 // --- Top-bar secondary-metrics fold -----------------------------------------
 function applyMetrics() {
+  const open = !uiState.metricsCollapsed;
   document
     .getElementById("metrics-more")
-    ?.setAttribute("data-open", String(!uiState.metricsCollapsed));
+    ?.setAttribute("data-open", String(open));
+  const toggle = document.getElementById("metrics-toggle");
+  if (toggle) {
+    toggle.textContent = open ? "▴" : "▾";
+    toggle.setAttribute("aria-expanded", String(open));
+  }
 }
 if (
   uiState.metricsCollapsed === undefined &&
@@ -1325,6 +1494,12 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
     (btn as HTMLElement).blur(); // keep keyboard focus off buttons
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
 
+    // Dock / Select: release any armed tool (Done). Haptic only on user Done.
+    if (tool === "select") {
+      disarmToSelect({ haptic: game.tool !== "select" });
+      return;
+    }
+
     if (tool === "upgrade_rig") {
       if (!askConfirm("upgrade_rig", "Raises rig tier for deeper zones.")) return;
       game.upgradeRig();
@@ -1375,7 +1550,7 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
 
     // Tap the armed latched tool's own button again = drop back to Select.
     if (tool === game.tool && LATCHED.has(tool)) {
-      disarmToSelect();
+      disarmToSelect({ haptic: true });
       return;
     }
     // Map-targeted tools
@@ -1976,7 +2151,7 @@ function syncHud() {
     ? `$${money(d.interestPerDay)}`
     : "off";
   const hardBtn = document.querySelector("#btn-hard") as HTMLElement;
-  hardBtn.textContent = d.mode === "hard" ? "Mode: Hard" : "Mode: Easy";
+  hardBtn.textContent = d.mode === "hard" ? "Mode: Hard ▸ tap for Easy" : "Mode: Easy ▸ tap for Hard";
   hardBtn.classList.toggle("active", d.mode === "hard");
   const repEl = document.querySelector("#stat-rep") as HTMLElement;
   repEl.textContent = game.player.reputation.toFixed(0);
@@ -2092,11 +2267,18 @@ if (restored) {
   flash(`Profile "${profiles.active}" restored. Autosaves as you play.`);
 } else {
   // First run on this profile — let the player choose their lease.
-  showMapPicker((cfg) => {
-    bootGame(false, cfg);
-    saveGame();
-    flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
-  });
+  // Still cancellable: a default Game is already running if they dismiss.
+  showMapPicker(
+    (cfg) => {
+      bootGame(false, cfg);
+      saveGame();
+      flash(`${cfg.mapName} lease. Road pad→battery→refinery, then drill.`);
+    },
+    {
+      cancellable: true,
+      hint: "Pick a starting map. ✕ keeps the default starter lease.",
+    },
+  );
 }
 rafId = requestAnimationFrame(frame);
 

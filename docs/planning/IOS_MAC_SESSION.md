@@ -8,6 +8,8 @@ Use this on a **rented Mac** after ASC + Bundle ID exist and the repo has `ios/`
 - [ ] App Store Connect app created (SKU, Bundle ID `com.playenergyepoch.app`)
 - [ ] Repo cloned (branch with Capacitor, e.g. `graphics/pixi-atlas-v1`)
 - [ ] Privacy URL works: https://playenergyepoch.com/privacy
+- [ ] Listing fields from `IOS_ASC_LISTING_1.0.md` pasted into ASC (can finish before binary)
+- [ ] Screenshots uploaded (at least `store-assets/ios/screenshots/iphone-6.7/*`)
 
 ## One-time on the Mac
 
