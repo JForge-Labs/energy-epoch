@@ -1,5 +1,6 @@
 import "./styles.css";
 import { Capacitor } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import { clampCamera, createCamera, screenToWorld } from "./game/camera";
 import { Game, type GameSnapshot } from "./game/Game";
 
@@ -9,6 +10,14 @@ import { Game, type GameSnapshot } from "./game/Game";
 const IS_NATIVE =
   Capacitor.isNativePlatform() ||
   new URLSearchParams(location.search).has("store");
+
+/** Light tap feedback on native (Done / tool release). No-op on web. */
+function lightHaptic(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {
+    /* plugin unavailable in some shells */
+  });
+}
 import {
   ADD_TANK_COST,
   BATTERY_COST,
@@ -63,28 +72,36 @@ app.innerHTML = `
         <div title="Debt interest charged per day. Only accrues in Hard mode — pay down debt to shrink it.">Int/day <strong id="stat-int">$0</strong></div>
         <div title="Live crude price ($/bbl).">Oil <strong id="stat-oil">$0</strong></div>
       </div>
-      <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats" aria-label="More stats">⋯</button>
+      <button type="button" class="metrics-toggle" id="metrics-toggle" title="More stats (Debt, interest, oil price)" aria-label="More stats">▾</button>
       <button type="button" class="metrics-toggle" id="inspect-toggle" title="Inspect tooltip (press I) — hover tiles for details" aria-label="Toggle inspect tooltip">ⓘ</button>
+    </div>
+    <div class="hud-controls">
+      <button type="button" class="tool-btn mode-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
       <div class="speed-ctl" title="Time speed">
         <button type="button" class="spd-btn" data-spd="0">❚❚</button>
         <button type="button" class="spd-btn" data-spd="0.5">0.5×</button>
         <button type="button" class="spd-btn active" data-spd="1">1×</button>
         <button type="button" class="spd-btn" data-spd="2">2×</button>
       </div>
+      <div class="hud-menu-wrap">
+        <button type="button" class="metrics-toggle hud-menu-btn" id="hud-menu-btn" title="Lease & save actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="hud-menu">⋯</button>
+        <div class="hud-menu" id="hud-menu" role="menu" hidden>
+          <span id="account-tag" class="account-tag hud-menu-tag" hidden></span>
+          <button type="button" class="hud-menu-item" id="btn-account" role="menuitem" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
+          <label class="hud-menu-label" for="profile-select">Profile</label>
+          <select id="profile-select" class="profile-select hud-menu-select" title="Save profile"></select>
+          <button type="button" class="hud-menu-item" id="btn-new-profile" role="menuitem" title="New profile">+ New profile</button>
+          <button type="button" class="hud-menu-item danger" id="btn-del-profile" role="menuitem" title="Delete this profile">Delete profile</button>
+          <div class="hud-menu-sep" role="separator"></div>
+          <button type="button" class="hud-menu-item" id="btn-export" role="menuitem" title="Download this profile as a JSON file (backup / move devices)">Export save</button>
+          <button type="button" class="hud-menu-item" id="btn-import" role="menuitem" title="Load a previously exported save JSON into this profile">Import save</button>
+          <div class="hud-menu-sep" role="separator"></div>
+          <button type="button" class="hud-menu-item" id="btn-home" role="menuitem">Home (recenter)</button>
+          <button type="button" class="hud-menu-item danger" id="btn-reset" role="menuitem">Reset lease</button>
+        </div>
+      </div>
     </div>
-    <div class="hud-actions">
-      <span id="account-tag" class="account-tag" hidden></span>
-      <button type="button" class="tool-btn" id="btn-account" title="Sign in with a magic link to save your games & maps to the cloud.">Sign in</button>
-      <button type="button" class="tool-btn" id="btn-hard" title="Difficulty. Easy: no interest, lease can't be shut in. Hard: ~11% APR debt interest AND shut-in on reputation 0 or insolvency.">Mode: Easy</button>
-      <select id="profile-select" class="profile-select" title="Save profile"></select>
-      <button type="button" class="tool-btn" id="btn-new-profile" title="New profile">+ New</button>
-      <button type="button" class="tool-btn" id="btn-del-profile" title="Delete this profile">Del</button>
-      <button type="button" class="tool-btn" id="btn-export" title="Download this profile as a JSON file (backup / move devices)">Export</button>
-      <button type="button" class="tool-btn" id="btn-import" title="Load a previously exported save JSON into this profile">Import</button>
-      <input type="file" id="import-file" accept="application/json,.json" hidden />
-      <button type="button" class="tool-btn" id="btn-home">Home</button>
-      <button type="button" class="tool-btn" id="btn-reset">Reset lease</button>
-    </div>
+    <input type="file" id="import-file" accept="application/json,.json" hidden />
   </header>
   <div class="stage-wrap">
     <canvas id="game-canvas"></canvas>
@@ -154,11 +171,13 @@ app.innerHTML = `
   </div>
   <footer class="bottom-bar" id="bottom-bar" data-collapsed="false">
     <div class="dock-rail" id="dock-rail">
-      <button class="tool-btn tool-dock active" id="tool-dock" data-tool="select" type="button" aria-pressed="false">
-        <span class="dock-mark" id="dock-mark">●</span>
-        <span class="dock-name" id="dock-name">Select</span>
-        <span class="dock-hint" id="dock-hint">tap a tile to inspect</span>
-        <span class="dock-x" aria-hidden="true">✕ Done</span>
+      <button class="tool-btn tool-dock active" id="tool-dock" data-tool="select" type="button" aria-pressed="false" aria-label="Select tool">
+        <span class="dock-lead">
+          <span class="dock-mark" id="dock-mark">●</span>
+          <span class="dock-name" id="dock-name">Select</span>
+          <span class="dock-hint" id="dock-hint">tap a tile to inspect</span>
+        </span>
+        <span class="dock-x" aria-hidden="true">Done</span>
       </button>
       <div class="tool-tabs" id="tool-tabs" role="tablist">
         <button class="tool-tab active" data-tab="actions" role="tab" type="button">Actions</button>
@@ -562,14 +581,16 @@ function setActiveTool(tool: BuildTool) {
   updateToolDock();
 }
 
-function disarmToSelect() {
+function disarmToSelect(opts?: { haptic?: boolean }) {
+  const wasArmed = game.tool !== "select";
   setActiveTool("select");
+  if (opts?.haptic && wasArmed) lightHaptic();
 }
 
 // --- Command Dock: Select IS the universal tool-release control -------------
 // Latched tools stay armed after use (repeated place / toggle / pathing); the
-// Dock morphs in place to show the held tool + a big "✕ Done" so dropping it is
-// one obvious tap — the fix for "releasing a latched tool is unintuitive".
+// Dock morphs in place to show the held tool + a big "Done" so dropping it is
+// one obvious tap. When armed, CSS collapses tabs + chips (tool-active mode).
 const LATCHED = new Set<BuildTool>([
   "road", "crude_pipe", "clean_pipe", "gas_pipe", "sell", "choke", "move_rig", "drill", "explore",
 ]);
@@ -578,6 +599,8 @@ const TOOL_LABEL: Record<string, string> = {
   explore: "Explore", add_tank: "Tank", gas_line: "Incinerator", road: "Road",
   crude_pipe: "Crude pipe", clean_pipe: "Clean pipe", gas_pipe: "Gas pipe", battery: "Battery",
   gas_plant: "Gas Refinery", refinery: "Refinery", sell: "Sell",
+  truck: "Truck", small_truck: "Truck 200", upgrade_rig: "Rig+",
+  pay_debt: "Pay debt", draw_credit: "Draw credit", buy_permit: "Permit",
 };
 const TOOL_HINT: Record<string, string> = {
   select: "tap a tile to inspect", drill: "tap tiles to queue wells",
@@ -594,14 +617,21 @@ function updateToolDock() {
   const dock = document.getElementById("tool-dock");
   if (!dock) return;
   const armed = game.tool !== "select";
+  const label = TOOL_LABEL[game.tool] ?? game.tool;
   window.clearTimeout(dockTimer);
   dock.classList.remove("placed");
   dock.classList.toggle("armed", armed);
   dock.setAttribute("aria-pressed", String(armed));
+  dock.setAttribute(
+    "aria-label",
+    armed ? `${label} active — tap Done to return to Select` : "Select tool",
+  );
   document.getElementById("bottom-bar")?.classList.toggle("tool-armed", armed);
   document.getElementById("dock-mark")!.textContent = armed ? "◉" : "●";
-  document.getElementById("dock-name")!.textContent = TOOL_LABEL[game.tool] ?? game.tool;
+  document.getElementById("dock-name")!.textContent = label;
   document.getElementById("dock-hint")!.textContent = TOOL_HINT[game.tool] ?? "";
+  const dockX = dock.querySelector(".dock-x");
+  if (dockX) dockX.setAttribute("aria-hidden", armed ? "false" : "true");
 }
 // Brief "✓ placed → Select" pulse so a one-shot tool's auto-return is *seen*.
 function flashDockPlaced() {
@@ -1141,6 +1171,37 @@ gateForm.addEventListener("submit", async (e) => {
   }
 });
 
+// --- Top-bar overflow menu (Export / Import / Home / profiles / …) ----------
+const hudMenuBtn = document.querySelector<HTMLButtonElement>("#hud-menu-btn")!;
+const hudMenu = document.querySelector<HTMLDivElement>("#hud-menu")!;
+function closeHudMenu() {
+  hudMenu.hidden = true;
+  hudMenuBtn.setAttribute("aria-expanded", "false");
+}
+function toggleHudMenu() {
+  const open = hudMenu.hidden;
+  hudMenu.hidden = !open;
+  hudMenuBtn.setAttribute("aria-expanded", String(open));
+}
+hudMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleHudMenu();
+});
+document.addEventListener("click", (e) => {
+  if (hudMenu.hidden) return;
+  const t = e.target as Node;
+  if (hudMenu.contains(t) || hudMenuBtn.contains(t)) return;
+  closeHudMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !hudMenu.hidden) closeHudMenu();
+});
+// Close after a menu action (keep open for profile <select>).
+hudMenu.addEventListener("click", (e) => {
+  const el = (e.target as HTMLElement).closest("button");
+  if (el && el.id !== "hud-menu-btn") closeHudMenu();
+});
+
 document.querySelector("#btn-home")!.addEventListener("click", () => {
   const p = game.recenterHint();
   cam.x = p.x;
@@ -1153,6 +1214,7 @@ document.querySelector("#btn-reset-go")!.addEventListener("click", resetLease);
 
 document.querySelector("#profile-select")!.addEventListener("change", (e) => {
   switchProfile((e.target as HTMLSelectElement).value);
+  closeHudMenu();
 });
 document.querySelector("#btn-new-profile")!.addEventListener("click", newProfile);
 document.querySelector("#btn-del-profile")!.addEventListener("click", deleteProfile);
@@ -1290,9 +1352,15 @@ document.getElementById("tabbar-caret")?.addEventListener("click", () => {
 
 // --- Top-bar secondary-metrics fold -----------------------------------------
 function applyMetrics() {
+  const open = !uiState.metricsCollapsed;
   document
     .getElementById("metrics-more")
-    ?.setAttribute("data-open", String(!uiState.metricsCollapsed));
+    ?.setAttribute("data-open", String(open));
+  const toggle = document.getElementById("metrics-toggle");
+  if (toggle) {
+    toggle.textContent = open ? "▴" : "▾";
+    toggle.setAttribute("aria-expanded", String(open));
+  }
 }
 if (
   uiState.metricsCollapsed === undefined &&
@@ -1416,6 +1484,12 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
     (btn as HTMLElement).blur(); // keep keyboard focus off buttons
     const tool = (btn as HTMLElement).dataset.tool as BuildTool;
 
+    // Dock / Select: release any armed tool (Done). Haptic only on user Done.
+    if (tool === "select") {
+      disarmToSelect({ haptic: game.tool !== "select" });
+      return;
+    }
+
     if (tool === "upgrade_rig") {
       if (!askConfirm("upgrade_rig", "Raises rig tier for deeper zones.")) return;
       game.upgradeRig();
@@ -1466,7 +1540,7 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
 
     // Tap the armed latched tool's own button again = drop back to Select.
     if (tool === game.tool && LATCHED.has(tool)) {
-      disarmToSelect();
+      disarmToSelect({ haptic: true });
       return;
     }
     // Map-targeted tools
