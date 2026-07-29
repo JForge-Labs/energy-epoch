@@ -181,7 +181,8 @@ export default {
       if (!isApp && !isAdmin) {
         // Landing domain: apex root always marketing; privacy is a real page.
         if (req.method === "GET" && (path === "/" || path === "/landing" || path === "/landing.html")) {
-          return staticHtml("/landing");
+          // File on disk is public/landing.html → dist/landing.html (no extensionless asset).
+          return staticHtml("/landing.html");
         }
         const accept = req.headers.get("accept") ?? "";
         if (
