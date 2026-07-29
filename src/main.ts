@@ -160,12 +160,13 @@ app.innerHTML = `
     <div class="signin-gate" id="signin-gate" hidden>
       <div class="signin-card">
         <h2>ENERGY EPOCH</h2>
-        <p>Sign in to play — we'll email you a one-tap link. Your maps and games save to the cloud and follow you across devices.</p>
+        <p>Sign in for cloud saves across devices — or play offline with local saves on this browser.</p>
         <form id="gate-form">
           <input type="email" id="gate-email" placeholder="you@example.com" autocomplete="email" required />
           <button type="submit" class="tool-btn active" id="gate-submit">Send sign-in link</button>
         </form>
         <p class="gate-status" id="gate-status"></p>
+        <button type="button" class="tool-btn" id="gate-offline" style="margin-top:0.6rem;width:100%">Play offline</button>
         <a class="gate-home" href="https://playenergyepoch.com/">← Back to home</a>
       </div>
     </div>
@@ -1060,11 +1061,25 @@ async function apiMe(): Promise<AuthState> {
   }
 }
 
-/** After magic-link redirect, cookie can lag one tick — retry once before gating. */
+/** After magic-link redirect: redeem handoff (re-sets cookie), then me + retry. */
 async function apiMeAfterSignIn(): Promise<AuthState> {
+  const params = new URLSearchParams(location.search);
+  const handoff = (params.get("h") || "").replace(/[^a-f0-9]/gi, "");
+  if (handoff) {
+    try {
+      await fetch("/api/auth/handoff", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoff }),
+      });
+    } catch {
+      /* continue to /api/me */
+    }
+  }
   let state = await apiMe();
   if (state === "out") {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 250));
     state = await apiMe();
   }
   return state;
@@ -1189,6 +1204,11 @@ if (IS_NATIVE) {
 // Gate sign-in form (mirrors the HUD Sign in flow, but blocking).
 const gateForm = document.querySelector<HTMLFormElement>("#gate-form")!;
 const gateStatus = document.querySelector<HTMLElement>("#gate-status")!;
+const gateOffline = document.querySelector<HTMLButtonElement>("#gate-offline")!;
+gateOffline.addEventListener("click", () => {
+  showGate(false);
+  flash("Playing offline — progress stays on this device. Sign in anytime from ⋯ menu.");
+});
 gateForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.querySelector<HTMLInputElement>("#gate-email")!.value.trim();
@@ -1202,7 +1222,7 @@ gateForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({ email }),
     });
     gateStatus.textContent =
-      "Link sent! Check your email — and your spam folder. Expires in 15 min.";
+      "Link sent! Check your email — and your spam folder. Expires in 15 min. Open the link on this device.";
   } catch {
     gateStatus.textContent = "Couldn't reach the server. Try again in a moment.";
   }

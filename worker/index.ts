@@ -57,11 +57,27 @@ function normEmail(e: unknown): string {
 function validEmail(e: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && e.length <= 254;
 }
-function json(obj: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
+function json(
+  obj: unknown,
+  status = 200,
+  extra?: HeadersInit,
+): Response {
+  const headers = new Headers(extra);
+  if (!headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+  return new Response(JSON.stringify(obj), { status, headers });
+}
+
+/** Set-Cookie must use Headers#append (plain objects can drop it in Workers). */
+function jsonWithCookie(
+  obj: unknown,
+  cookie: string,
+  status = 200,
+): Response {
+  const headers = new Headers({ "content-type": "application/json" });
+  headers.append("Set-Cookie", cookie);
+  return new Response(JSON.stringify(obj), { status, headers });
 }
 function requestHost(req: Request): string {
   return (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
@@ -85,10 +101,23 @@ function cookieDomainAttr(req: Request): string {
 }
 function cookieHeader(id: string, req: Request): string {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  // Host-only + optional Domain for sibling subdomains. Prefer Secure; SameSite=Lax
+  // so top-level email → site navigations still attach the cookie afterward.
   return `${COOKIE}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}${cookieDomainAttr(req)}`;
 }
 function clearCookieHeader(req: Request): string {
   return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0${cookieDomainAttr(req)}`;
+}
+
+/** One-time post-login codes so the game page can re-attach the session cookie. */
+async function ensureHandoffTable(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS auth_handoffs (
+       code_hash TEXT PRIMARY KEY,
+       session_id TEXT NOT NULL,
+       expires_at INTEGER NOT NULL
+     )`,
+  ).run();
 }
 function isAdminEmail(email: string): boolean {
   return normEmail(email) === ADMIN_EMAIL;
@@ -172,6 +201,11 @@ export default {
         (path === "/confirm" || path === "/confirm.html")
       ) {
         return staticHtml("/confirm.html");
+      }
+
+      // App host: never edge-cache the SPA shell (stale index → “old build”).
+      if (isApp && req.method === "GET" && (path === "/" || path === "/index.html")) {
+        return staticHtml("/index.html");
       }
 
       if (isAdmin && req.method === "GET") {
@@ -271,9 +305,44 @@ export default {
         )
           .bind(await sha256hex(sid), user.id, now + SESSION_TTL_MS, now)
           .run();
-        // JSON (not a 302) — the caller is a fetch() from /confirm; the browser
-        // still applies Set-Cookie, then the page redirects into the game/admin.
-        return json({ ok: true }, 200, { "set-cookie": cookieHeader(sid, req) });
+        // One-time handoff code: game page can POST it if Set-Cookie on fetch was dropped.
+        const handoff = randHex(16);
+        await ensureHandoffTable(env);
+        await env.DB.prepare(
+          `INSERT INTO auth_handoffs (code_hash, session_id, expires_at) VALUES (?, ?, ?)`,
+        )
+          .bind(await sha256hex(handoff), sid, now + 5 * 60 * 1000)
+          .run();
+        // JSON (not a 302) — fetch() from /confirm; Set-Cookie via Headers#append.
+        return jsonWithCookie({ ok: true, handoff }, cookieHeader(sid, req));
+      }
+
+      // --- POST /api/auth/handoff { handoff } → re-set session cookie on this host ---
+      if (url.pathname === "/api/auth/handoff" && req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { handoff?: string };
+        const code = String(body.handoff ?? "").replace(/[^a-f0-9]/gi, "");
+        if (!code) return json({ error: "missing handoff" }, 400);
+        await ensureHandoffTable(env);
+        const hash = await sha256hex(code);
+        const row = await env.DB.prepare(
+          `SELECT session_id, expires_at FROM auth_handoffs WHERE code_hash = ?`,
+        )
+          .bind(hash)
+          .first<{ session_id: string; expires_at: number }>();
+        if (!row || row.expires_at < now) {
+          return json({ error: "invalid or expired handoff" }, 400);
+        }
+        await env.DB.prepare(`DELETE FROM auth_handoffs WHERE code_hash = ?`)
+          .bind(hash)
+          .run();
+        // Ensure session still exists
+        const sess = await env.DB.prepare(
+          `SELECT user_id FROM sessions WHERE id_hash = ? AND expires_at > ?`,
+        )
+          .bind(await sha256hex(row.session_id), now)
+          .first();
+        if (!sess) return json({ error: "session expired" }, 401);
+        return jsonWithCookie({ ok: true }, cookieHeader(row.session_id, req));
       }
 
       // --- GET /api/me ---
@@ -292,7 +361,7 @@ export default {
             .bind(await sha256hex(sid))
             .run();
         }
-        return json({ ok: true }, 200, { "set-cookie": clearCookieHeader(req) });
+        return jsonWithCookie({ ok: true }, clearCookieHeader(req));
       }
 
       // --- GET /api/admin/signups — operator only ---

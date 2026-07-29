@@ -20,7 +20,7 @@
     var token = (new URLSearchParams(location.search).get("token") || "").replace(/[^a-f0-9]/g, "");
     // Absolute post-login destinations — never relative "/".
     // Apex "/" is the marketing landing; the game only lives on app.*.
-    var APP_HOME = "https://app.playenergyepoch.com/?signedin=1";
+    var APP_HOME = "https://app.playenergyepoch.com/";
     var ADMIN_HOME = "https://admin.playenergyepoch.com/";
     function consume() {
       msg.textContent = "Signing you in…";
@@ -38,7 +38,7 @@
           if (!r.ok) return r.text().then(function (t) { throw new Error(t || "Sign-in failed"); });
           return r.json();
         })
-        .then(function () {
+        .then(function (data) {
           var next = (new URLSearchParams(location.search).get("next") || "").toLowerCase();
           var onAdmin = location.hostname.indexOf("admin.") === 0;
           if (onAdmin || next === "admin") {
@@ -46,7 +46,11 @@
             location.replace(ADMIN_HOME);
           } else {
             msg.textContent = "Signed in! Loading the game…";
-            location.replace(APP_HOME);
+            // Absolute app URL + handoff so the game host can re-attach the cookie
+            // even if Set-Cookie on this fetch was ignored by the browser/webview.
+            var h = (data && data.handoff) ? String(data.handoff).replace(/[^a-f0-9]/gi, "") : "";
+            var q = "signedin=1" + (h ? "&h=" + encodeURIComponent(h) : "");
+            location.replace(APP_HOME + "?" + q);
           }
         })
         .catch(function (e) {

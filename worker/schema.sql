@@ -33,3 +33,9 @@ CREATE TABLE IF NOT EXISTS saves (
 );
 CREATE INDEX IF NOT EXISTS idx_saves_user ON saves(user_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_email ON login_tokens(email);
+-- One-time codes after magic-link consume (game host re-attaches session cookie).
+CREATE TABLE IF NOT EXISTS auth_handoffs (
+  code_hash TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
