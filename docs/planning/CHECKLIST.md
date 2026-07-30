@@ -66,3 +66,4 @@ Update status when something ships. Use: `todo` | `doing` | `done` | `blocked` |
 | 2026-07-29 | PR #2 merged to main: iOS packaging, HUD polish, brand icons + landing; Cloudflare deploy workflow fixed (Node 22 + Wrangler 4) |
 | 2026-07-29 | Canonical iOS ship = local Mac Archive only; Xcode Cloud not configured (emails may be half-setup — disable workflow) |
 | 2026-07-29 | Deploy workflow documented in PATH_W_DEPLOY.md; Mac path + Xcode Cloud notes in IOS_MAC_SESSION.md |
+| 2026-07-30 | Deploy hard lessons expanded (shell cache, auth handoff, Xcode Cloud spam); admin stats = accounts vs link funnel; D1 ground truth 1 account / 27 link requests |

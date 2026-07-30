@@ -21,14 +21,29 @@ Do **not** start a Unity port, second engine, or multiplayer server unless the u
 | Test | `npm test` | Headless smoke (`smoke.ts`) |
 | Build | `npm run build` | `tsc` + Vite → `dist/` (typecheck gate) |
 | Preview | `npm run preview` | Serves `dist/` |
+| Deploy web | `npm run deploy` | `build` + Wrangler 4 → Cloudflare; or push **`main`** for Actions |
 
 Repo root = package root (no nested `cd` into another app folder).
 
+## Deploy (read before shipping web)
+
+Canonical doc: **`docs/planning/PATH_W_DEPLOY.md`** (section *Deploy hard lessons*).
+
+Non-negotiables:
+
+1. CI Node **22** + Wrangler **4** (not 20 / Wrangler 3).  
+2. `wrangler.toml`: `run_worker_first = true`.  
+3. HTML shells via Worker with **`no-store`** (apex landing, app index, confirm, admin).  
+4. After deploy: confirm live **`index-*.js` hash** matches this build (not CF HIT on old shell).  
+5. Magic-link: absolute **app.** URL + **session form POST** handoff — never relative `/`.  
+6. Xcode Cloud: **disable** if email spam on every push; iOS = local Mac Archive.
+
 ## Gotchas
 
-- No env vars/secrets required. Google Fonts are cosmetic.
+- No env vars/secrets required for local game. Production uses CF secrets (`RESEND_API_KEY`, etc.).
 - Simulation is renderer-agnostic: keep drawing out of `Game.ts`.
-- Saves use `localStorage`; don’t assume a server.
+- Saves: localStorage offline; optional cloud on **app.** after magic-link.
+- Admin: `admin.playenergyepoch.com` — **Accounts** = `users` rows, not raw email requests.
 - **Collision avoidance:** if another agent is mid-build, don’t drive-by rewrite `Game.ts` / systems. See `docs/planning/AGENT_LANES.md`.
 
 ## Planning pack (Claude handoff)

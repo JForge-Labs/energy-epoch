@@ -342,27 +342,40 @@
       <!-- Dashboard -->
       <section class="hidden" id="dash">
         <div class="stats">
-          <div class="stat">
-            <div class="k">Total signups</div>
+          <div class="stat" title="Completed accounts (users table) — magic-link consume succeeded">
+            <div class="k">Accounts</div>
             <div class="v" id="s-total">—</div>
           </div>
-          <div class="stat">
-            <div class="k">Last 24h</div>
+          <div class="stat" title="New accounts in last 24 hours">
+            <div class="k">New 24h</div>
             <div class="v" id="s-day">—</div>
           </div>
-          <div class="stat">
-            <div class="k">Last 7d</div>
+          <div class="stat" title="New accounts in last 7 days">
+            <div class="k">New 7d</div>
             <div class="v" id="s-week">—</div>
           </div>
-          <div class="stat">
+          <div class="stat" title="Accounts with last_login in last 7 days">
             <div class="k">Active 7d</div>
             <div class="v" id="s-active">—</div>
           </div>
-          <div class="stat">
+          <div class="stat" title="Cloud save blobs in R2/D1 index">
             <div class="k">Cloud saves</div>
             <div class="v" id="s-saves">—</div>
           </div>
+          <div class="stat" title="Magic-link emails requested (includes unused/expired)">
+            <div class="k">Link requests</div>
+            <div class="v" id="s-links">—</div>
+          </div>
+          <div class="stat" title="Magic links that were consumed (one user can consume many times)">
+            <div class="k">Links used</div>
+            <div class="v" id="s-used">—</div>
+          </div>
         </div>
+        <p class="muted" style="margin:0 0 1rem;font-size:0.85rem;max-width:52rem">
+          <strong>Accounts</strong> = completed sign-ups (email verified via magic link).
+          Many <strong>link requests</strong> can exist for a single account (retries, re-logins).
+          Zero accounts with many link requests usually means people requested email but never finished the link.
+        </p>
 
         <div class="toolbar">
           <input type="search" id="q" placeholder="Filter by email or name…" />
@@ -393,7 +406,8 @@
 
         <p class="err hidden" id="err"></p>
         <footer class="foot">
-          admin.playenergyepoch.com · allowlist-only · data from D1 users table
+          admin.playenergyepoch.com · allowlist-only · D1 <code>users</code> (accounts) +
+          <code>login_tokens</code> (link funnel) · refresh after sign-ins
         </footer>
       </section>
     </div>
@@ -498,9 +512,13 @@
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
         }
+        function num(v) {
+          var x = Number(v);
+          return Number.isFinite(x) ? x : 0;
+        }
         function loadSignups() {
           errEl.classList.add("hidden");
-          return fetch("/api/admin/signups", { credentials: "same-origin" })
+          return fetch("/api/admin/signups", { credentials: "include" })
             .then(function (r) {
               if (r.status === 401 || r.status === 403) {
                 showGate(
@@ -517,13 +535,15 @@
               if (!data) return;
               users = data.users || [];
               var st = data.stats || {};
-              document.getElementById("s-total").textContent = st.total ?? "0";
-              document.getElementById("s-day").textContent = st.day ?? "0";
-              document.getElementById("s-week").textContent = st.week ?? "0";
-              document.getElementById("s-active").textContent = st.activeWeek ?? "0";
-              document.getElementById("s-saves").textContent = st.saves ?? "0";
+              document.getElementById("s-total").textContent = String(num(st.total));
+              document.getElementById("s-day").textContent = String(num(st.day));
+              document.getElementById("s-week").textContent = String(num(st.week));
+              document.getElementById("s-active").textContent = String(num(st.activeWeek));
+              document.getElementById("s-saves").textContent = String(num(st.saves));
+              document.getElementById("s-links").textContent = String(num(st.linkRequests));
+              document.getElementById("s-used").textContent = String(num(st.linkUsed));
               document.getElementById("gen-label").textContent =
-                "updated " + fmtWhen(data.generatedAt);
+                "updated " + fmtWhen(data.generatedAt) + " · " + users.length + " row(s)";
               renderTable(document.getElementById("q").value);
               showDash();
             })
@@ -534,7 +554,7 @@
         }
 
         // Boot: session?
-        fetch("/api/me", { credentials: "same-origin" })
+        fetch("/api/me", { credentials: "include" })
           .then(function (r) {
             return r.ok ? r.json() : null;
           })

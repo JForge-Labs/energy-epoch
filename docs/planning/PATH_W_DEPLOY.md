@@ -114,7 +114,8 @@ https://playenergyepoch.com/              → landing (hero icon, ENERGY EPOCH m
 https://playenergyepoch.com/landing       → same landing
 https://playenergyepoch.com/app-icon-512.png → image/png
 https://playenergyepoch.com/favicon-32.png   → image/png
-https://app.playenergyepoch.com/          → game shell
+https://app.playenergyepoch.com/          → game shell (check <meta name="ee-build"> / index-*.js hash)
+https://admin.playenergyepoch.com/        → admin shell (no-store)
 ```
 
 If `/` still looks like the SPA: hard-refresh / private window (edge may `cf-cache-status: HIT` briefly). Landing HTML itself is `no-store` when served by the Worker.
@@ -125,6 +126,91 @@ If `/` still looks like the SPA: hard-refresh / private window (edge may `cf-cac
 2. Hard refresh after deploys; hashed game asset filenames change every build. Favicons need a private window more often than JS.  
 3. Gate: `npm test && npm run build` before ship.  
 4. Auth: D1 / R2 on Cloudflare — see `wrangler.toml`. Do **not** reintroduce Railway for static hosting.
+
+---
+
+## Deploy hard lessons (2026-07-29 → 07-30) — do not re-learn
+
+We hit the **same class of bugs twice**. Capture is intentional.
+
+### 1. CI must use Node 22 + Wrangler 4
+
+| Wrong | Right |
+|-------|--------|
+| `node-version: 20` | **`node-version: 22`** |
+| Action auto-installs Wrangler 3 | Pin **`package: wrangler@4.114.0`** (or current v4) |
+
+Wrangler 3 **ignores** `assets.run_worker_first` → apex `/` serves game SPA; host-split dies.
+
+### 2. HTML shells must never edge-cache
+
+Worker `staticHtml()` for landing / admin / app index / confirm:
+
+```http
+cache-control: no-store, no-cache, must-revalidate, max-age=0
+cdn-cache-control: no-store
+```
+
+App host **`/`** must go through Worker (`isApp` → `staticHtml("/index.html")`), not bare ASSETS, or CF **HIT** keeps an old `index-XXXX.js` reference after deploy.
+
+### 3. Verify the **live JS hash**, not only “deploy succeeded”
+
+```bash
+# After npm run deploy / CI green:
+curl -sI "https://app.playenergyepoch.com/?t=$RANDOM" | grep -i cache
+curl -s "https://app.playenergyepoch.com/?t=$RANDOM" | findstr /i "index-"
+# Asset must be text/javascript (not text/html SPA fallback)
+```
+
+If `index-OLDHASH.js` returns **`text/html`**, that hash is gone and clients with a cached shell are broken until they get a new shell.
+
+### 4. Auth: never `location.replace("/")` after magic link
+
+| Wrong | Right |
+|-------|--------|
+| `location.replace("/?signedin=1")` | Absolute **`https://app.playenergyepoch.com/...`** |
+| Rely only on `fetch` Set-Cookie | **Form POST** → `/api/auth/session` → **303** + Set-Cookie on navigation |
+
+Confirm page: consume (JSON) → handoff code → full-page POST session redeem.
+
+### 5. Wrangler “No updated asset files” can lie about what clients see
+
+Content-addressed assets: if local `dist/` matches last upload, wrangler skips. Combined with **cached HTML**, prod looks “old.” Force a shell change (e.g. `meta name="ee-build"`) or touch public HTML when debugging deploys.
+
+### 6. Xcode Cloud ≠ web deploy
+
+Pushes to `main` can still fire **Xcode Cloud** if a half-finished workflow exists → inbox full of `Package.swift` / SPM errors. **Delete the Xcode Cloud workflow** in ASC. Ship iOS with **local Mac Archive** only (`docs/planning/IOS_MAC_SESSION.md`).
+
+### 7. Canonical ship checklist (every prod web change)
+
+```bash
+git checkout main && git pull
+npm test && npm run build
+npm run deploy
+# or: push main and wait for Actions "Deploy (Cloudflare Workers)" success
+
+# Smoke (private window if in doubt)
+# 1) landing icon + brand
+# 2) app shell hash matches this build’s dist/index.html
+# 3) confirm.html contains auth/session form POST
+# 4) admin loads stats (see Admin / D1 below)
+```
+
+### Admin signups accuracy
+
+| Metric | Source | Meaning |
+|--------|--------|---------|
+| **Accounts** | `users` | Completed sign-ups (consume succeeded) |
+| **Link requests** | `login_tokens` | Magic links emailed (includes unused) |
+| **Links used** | `login_tokens.used_at` | Consumed links (can be ≫ accounts) |
+| **Cloud saves** | `saves` | Cloud backup blobs |
+
+```bash
+npx wrangler d1 execute energy-epoch-db --remote --command \
+  "SELECT (SELECT COUNT(*) FROM users) AS accounts, (SELECT COUNT(*) FROM login_tokens) AS link_requests;"
+```
+
+**Zero accounts + many link requests** = people requested email but never finished the link (or auth handoff failed). Not a silent “admin zero” bug if D1 also shows 0 accounts.
 
 ---
 

@@ -442,23 +442,24 @@ export default {
         }
         const weekAgo = now - 7 * 24 * 3600 * 1000;
         const dayAgo = now - 24 * 3600 * 1000;
+        // D1 may return COUNTs as strings — always coerce with Number().
+        const n = (v: unknown) => {
+          const x = Number(v);
+          return Number.isFinite(x) ? x : 0;
+        };
         const totals = await env.DB.prepare(
           `SELECT
              (SELECT COUNT(*) FROM users) AS total,
              (SELECT COUNT(*) FROM users WHERE created_at >= ?) AS week,
              (SELECT COUNT(*) FROM users WHERE created_at >= ?) AS day,
              (SELECT COUNT(*) FROM users WHERE last_login >= ?) AS activeWeek,
-             (SELECT COUNT(*) FROM saves) AS saves
+             (SELECT COUNT(*) FROM saves) AS saves,
+             (SELECT COUNT(*) FROM login_tokens) AS linkRequests,
+             (SELECT COUNT(*) FROM login_tokens WHERE used_at IS NOT NULL) AS linkUsed
           `,
         )
           .bind(weekAgo, dayAgo, weekAgo)
-          .first<{
-            total: number;
-            week: number;
-            day: number;
-            activeWeek: number;
-            saves: number;
-          }>();
+          .first<Record<string, unknown>>();
 
         const rows = await env.DB.prepare(
           `SELECT u.id, u.email, u.name, u.created_at AS createdAt, u.last_login AS lastLogin,
@@ -475,15 +476,26 @@ export default {
           saveCount: number;
         }>();
 
+        const users = (rows.results ?? []).map((u) => ({
+          ...u,
+          createdAt: n(u.createdAt),
+          lastLogin: u.lastLogin == null ? null : n(u.lastLogin),
+          saveCount: n(u.saveCount),
+        }));
+
         return json({
+          // "Signups" = completed accounts in `users` (magic-link consume succeeded).
+          // Link requests can be much higher (many emails never opened / expired).
           stats: {
-            total: totals?.total ?? 0,
-            week: totals?.week ?? 0,
-            day: totals?.day ?? 0,
-            activeWeek: totals?.activeWeek ?? 0,
-            saves: totals?.saves ?? 0,
+            total: n(totals?.total),
+            week: n(totals?.week),
+            day: n(totals?.day),
+            activeWeek: n(totals?.activeWeek),
+            saves: n(totals?.saves),
+            linkRequests: n(totals?.linkRequests),
+            linkUsed: n(totals?.linkUsed),
           },
-          users: rows.results ?? [],
+          users,
           generatedAt: now,
         });
       }
