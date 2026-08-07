@@ -1,7 +1,7 @@
 # Energy Epoch — agent instructions
 
-A **pure client-side** browser game (oil/energy ops sim): Vite + TypeScript + Pixi.js.  
-No backend, database, or game servers. Runtime is the browser (or later a Capacitor shell).
+A browser game (oil/energy ops sim): Vite + TypeScript + Pixi.js client, playable **fully offline** (localStorage saves). Runtime is the browser (or later a Capacitor shell).  
+Backend is a single Cloudflare Worker (`worker/index.ts`): D1 (`DB`) + R2 (`SAVES`) + magic-link auth, serving accounts, cloud saves, and the admin dashboard. No game servers — the simulation runs entirely client-side and never requires the backend.
 
 ## Engine decision (read this)
 
